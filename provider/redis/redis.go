@@ -2,7 +2,9 @@ package redisprovider
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -52,12 +54,13 @@ func (Provider) Run(ctx context.Context, u *url.URL, dispatcher *callback.Dispat
 	}
 
 	// Receive forces Redis to acknowledge the subscription before Run enters
-	// the message loop. This is particularly useful to callers supervising an
-	// ephemeral subscription process.
+	// the message loop. This is useful to callers supervising an ephemeral
+	// subscription process.
 	if _, err := pubsub.Receive(ctx); err != nil {
 		return fmt.Errorf("redis subscribe: %w", err)
 	}
 
+	source := publicSource(u)
 	for {
 		msg, err := pubsub.ReceiveMessage(ctx)
 		if err != nil {
@@ -69,7 +72,7 @@ func (Provider) Run(ctx context.Context, u *url.URL, dispatcher *callback.Dispat
 
 		if err := dispatcher.Dispatch(ctx, callback.Message{
 			Provider: "redis",
-			Source:   u.Redacted(),
+			Source:   source,
 			Channel:  msg.Channel,
 			Pattern:  msg.Pattern,
 			Payload:  msg.Payload,
@@ -99,21 +102,26 @@ func options(u *url.URL) (*redis.Options, error) {
 
 	switch u.Scheme {
 	case "redis", "rediss":
-		addr := u.Host
-		if addr == "" {
+		host := u.Hostname()
+		if host == "" {
 			return nil, fmt.Errorf("redis URL requires host")
 		}
-		if !strings.Contains(addr, ":") {
-			addr += ":6379"
+		port := u.Port()
+		if port == "" {
+			port = "6379"
 		}
-		return &redis.Options{
+
+		opts := &redis.Options{
 			Network:  "tcp",
-			Addr:     addr,
+			Addr:     net.JoinHostPort(host, port),
 			Username: username,
 			Password: password,
 			DB:       db,
-			TLSConfig: tlsConfig(u.Scheme == "rediss"),
-		}, nil
+		}
+		if u.Scheme == "rediss" {
+			opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host}
+		}
+		return opts, nil
 
 	case "redis+unix":
 		if u.Path == "" {
@@ -132,11 +140,22 @@ func options(u *url.URL) (*redis.Options, error) {
 }
 
 func clean(values []string) []string {
-	out := values[:0]
+	out := make([]string, 0, len(values))
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			out = append(out, value)
 		}
 	}
 	return out
+}
+
+// publicSource keeps transport identity while stripping credentials and callback
+// destinations from the event envelope.
+func publicSource(u *url.URL) string {
+	copy := *u
+	copy.User = nil
+	q := copy.Query()
+	q.Del("callback")
+	copy.RawQuery = q.Encode()
+	return copy.String()
 }
