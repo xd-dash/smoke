@@ -10,15 +10,17 @@ import (
 
 	"github.com/xd-dash/smoke/callback"
 	redisprovider "github.com/xd-dash/smoke/provider/redis"
+	redisauth "github.com/xd-dash/smoke/provider/redis/auth"
 )
 
 type cliArgs struct {
-	Profile   string
-	Channels  []string
-	Patterns  []string
-	Callbacks []string
-	NoStdout  bool
-	Policy    callback.FailurePolicy
+	Profile      string
+	Channels     []string
+	Patterns     []string
+	Callbacks    []string
+	NoStdout     bool
+	Policy       callback.FailurePolicy
+	AuthProvider string
 }
 
 func main() {
@@ -62,7 +64,33 @@ func main() {
 	if err != nil {
 		die("resolve %s: %v", profile, err)
 	}
-	applyEnvironmentAuth(&target)
+
+	authProvider := cfg.AuthProvider
+	if authProvider == "" {
+		authProvider = target.AuthProvider
+	}
+	if authProvider == "" {
+		authProvider = "auto-env"
+	}
+	authProfile := target.AuthProfile
+	if authProfile == "" {
+		authProfile = cfg.Profile
+	}
+
+	authRegistry, err := redisauth.New(
+		redisauth.None{},
+		redisauth.PasswordEnv{},
+		redisauth.ACLEnv{},
+		redisauth.AutoEnv{},
+	)
+	if err != nil {
+		die("auth registry: %v", err)
+	}
+	credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile)
+	if err != nil {
+		die("auth provider %s: %v", authProvider, err)
+	}
+	target = credentials.Apply(target)
 
 	err = redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
 		Target:   target,
@@ -80,16 +108,28 @@ func parseArgs(args []string) (cliArgs, error) {
 		switch args[i] {
 		case "--pattern", "-p":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("%s requires a value", args[i-1])
+			}
 			cfg.Patterns = append(cfg.Patterns, args[i])
 		case "--callback", "-c":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("%s requires a value", args[i-1])
+			}
 			cfg.Callbacks = append(cfg.Callbacks, args[i])
 		case "--callback-policy":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("--callback-policy requires a value") }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("--callback-policy requires a value")
+			}
 			cfg.Policy = callback.FailurePolicy(args[i])
+		case "--auth-provider":
+			i++
+			if i >= len(args) {
+				return cfg, fmt.Errorf("--auth-provider requires a value")
+			}
+			cfg.AuthProvider = args[i]
 		case "--no-stdout", "-q":
 			cfg.NoStdout = true
 		default:
@@ -104,7 +144,7 @@ func parseArgs(args []string) (cliArgs, error) {
 		}
 	}
 	if cfg.Profile == "" {
-		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--callback URL] [--no-stdout]")
+		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--callback URL] [--auth-provider NAME] [--no-stdout]")
 	}
 	if len(cfg.Channels) == 0 && len(cfg.Patterns) == 0 {
 		return cfg, fmt.Errorf("at least one channel or --pattern is required")
@@ -121,16 +161,6 @@ func normalizeProfile(name string) string {
 		return name
 	}
 	return name + ".logma.sh"
-}
-
-func applyEnvironmentAuth(target *redisprovider.Target) {
-	if target.AuthProfile == "" {
-		return
-	}
-	key := strings.ToUpper(target.AuthProfile)
-	key = strings.NewReplacer("-", "_", ".", "_", ":", "_").Replace(key)
-	target.Username = os.Getenv("LOGMASH_REDIS_" + key + "_USERNAME")
-	target.Password = os.Getenv("LOGMASH_REDIS_" + key + "_PASSWORD")
 }
 
 func die(format string, args ...any) {
