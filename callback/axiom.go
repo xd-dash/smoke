@@ -12,12 +12,14 @@ import (
 	"time"
 )
 
-// Axiom ingests callback messages into an Axiom edge deployment dataset.
-// API tokens are resolved from the environment and are never embedded in the
-// callback URL or callback source metadata.
+// Axiom ingests callback messages into one runtime-selected Axiom dataset.
+// Dataset identity is never read from DNS. DNS profiles only resolve deployment
+// metadata such as the edge domain and a non-secret auth profile selector.
 type Axiom struct {
 	Dataset         string
 	Domain          string
+	Profile         string
+	AuthProfile     string
 	TokenEnv        string
 	TimestampField  string
 	TimestampFormat string
@@ -38,7 +40,11 @@ func (a Axiom) Handle(ctx context.Context, message Message) error {
 	if domain == "" {
 		return fmt.Errorf("Axiom edge domain is required")
 	}
+
 	tokenEnv := strings.TrimSpace(a.TokenEnv)
+	if tokenEnv == "" && a.AuthProfile != "" {
+		tokenEnv = "LOGMASH_AXIOM_" + envProfile(a.AuthProfile) + "_TOKEN"
+	}
 	if tokenEnv == "" {
 		tokenEnv = "AXIOM_TOKEN"
 	}
@@ -94,13 +100,38 @@ func parseAxiomURL(u *url.URL) (Callback, error) {
 	if dataset == "" {
 		return nil, fmt.Errorf("axiom callback requires dataset id")
 	}
+
 	q := u.Query()
+	profileName := strings.TrimSpace(q.Get("profile"))
+	domain := strings.TrimSpace(q.Get("domain"))
+	if profileName != "" && domain != "" {
+		return nil, fmt.Errorf("axiom callback may use profile or domain, not both")
+	}
+
+	authProfile := ""
+	if profileName != "" {
+		profile, err := resolveAxiomDNSProfile(profileName)
+		if err != nil {
+			return nil, err
+		}
+		domain = profile.Domain
+		authProfile = profile.AuthProfile
+	}
+
 	return Axiom{
 		Dataset:         dataset,
-		Domain:          q.Get("domain"),
+		Domain:          domain,
+		Profile:         profileName,
+		AuthProfile:     authProfile,
 		TokenEnv:        q.Get("token-env"),
 		TimestampField:  q.Get("timestamp-field"),
 		TimestampFormat: q.Get("timestamp-format"),
 		EventLabels:     q.Get("event-labels"),
 	}, nil
+}
+
+func envProfile(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	replacer := strings.NewReplacer("-", "_", ".", "_", ":", "_")
+	return replacer.Replace(name)
 }
