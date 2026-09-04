@@ -52,3 +52,16 @@ func TestNoStdoutRequiresCallback(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestAxiomCallbackAcceptedAsCallback(t *testing.T) {
+	got, err := parseArgs([]string{
+		"west", "events", "--no-stdout",
+		"--callback", "axiom://events?domain=us-east-1.aws.edge.axiom.co",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Callbacks) != 1 {
+		t.Fatalf("callbacks = %#v", got.Callbacks)
+	}
+}
