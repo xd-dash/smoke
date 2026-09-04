@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Parse converts repeated callback= query values into callbacks. Supported
-// values are "stdout" and absolute http(s) webhook URLs.
+// Parse converts repeated callback values into callbacks. Supported values are
+// "stdout", absolute http(s) webhook URLs, and axiom:// dataset callbacks.
 func Parse(values []string) (*Dispatcher, error) {
 	callbacks := make([]Callback, 0, len(values))
 
@@ -22,10 +22,24 @@ func Parse(values []string) (*Dispatcher, error) {
 		}
 
 		u, err := url.Parse(value)
-		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		if err != nil {
 			return nil, fmt.Errorf("unsupported callback %q", value)
 		}
-		callbacks = append(callbacks, Webhook{URL: u})
+		switch u.Scheme {
+		case "http", "https":
+			if u.Host == "" {
+				return nil, fmt.Errorf("unsupported callback %q", value)
+			}
+			callbacks = append(callbacks, Webhook{URL: u})
+		case "axiom":
+			cb, err := parseAxiomURL(u)
+			if err != nil {
+				return nil, fmt.Errorf("callback %q: %w", value, err)
+			}
+			callbacks = append(callbacks, cb)
+		default:
+			return nil, fmt.Errorf("unsupported callback %q", value)
+		}
 	}
 
 	return New(callbacks...), nil
