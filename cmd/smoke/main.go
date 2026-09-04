@@ -3,64 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/xd-dash/smoke"
-	"github.com/xd-dash/smoke/callback"
-	redisprovider "github.com/xd-dash/smoke/provider/redis"
+	"github.com/xd-dash/smoke/command"
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		die("usage: smoke <provider-url>")
+	if len(os.Args) < 2 {
+		die("usage: smoke <registered-command> [args ...]")
 	}
 
-	rawURL := os.Args[1]
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		die("parse URL: %v", err)
-	}
-
-	dispatcher, err := callback.Parse(u.Query()["callback"])
-	if err != nil {
-		die("callbacks: %v", err)
-	}
-	if dispatcher.Empty() {
-		die("at least one callback is required")
-	}
-
-	policy := callback.Continue
-	if raw := u.Query().Get("callback-policy"); raw != "" {
-		policy = callback.FailurePolicy(raw)
-	}
-	if err := dispatcher.SetFailurePolicy(policy); err != nil {
-		die("callback policy: %v", err)
-	}
-	dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
-		fmt.Fprintf(
-			os.Stderr,
-			"smoke: callback failure provider=%s channel=%q pattern=%q: %v\n",
-			message.Provider,
-			message.Channel,
-			message.Pattern,
-			err,
-		)
-	})
-
-	if !dispatcher.HasStdout() && os.Getenv("SMOKE_DETACHED") != "1" {
-		pid, logPath, err := detach(rawURL)
-		if err != nil {
-			die("detach: %v", err)
-		}
-		fmt.Fprintf(os.Stderr, "smoke: started pid=%d log=%s\n", pid, logPath)
-		return
-	}
-
-	registry, err := smoke.New(
-		redisprovider.New(),
+	registry, err := command.New(
+		command.Command{
+			Name:      "logmash",
+			GoPackage: "github.com/xd-dash/smoke/cmd/logmash@latest",
+		},
 	)
 	if err != nil {
 		die("registry: %v", err)
@@ -69,8 +28,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := registry.Run(ctx, rawURL, dispatcher); err != nil && ctx.Err() == nil {
-		die("%v", err)
+	path, err := registry.Resolve(ctx, os.Args[1])
+	if err != nil {
+		die("resolve %s: %v", os.Args[1], err)
+	}
+
+	// On Unix this replaces Smoke with the resolved command. The command owns
+	// its terminal/process lifecycle exactly as though it had been invoked
+	// directly. Smoke has no knowledge of that command's provider grammar.
+	if err := command.Exec(path, os.Args[2:]); err != nil {
+		die("run %s: %v", os.Args[1], err)
 	}
 }
 
