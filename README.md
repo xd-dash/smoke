@@ -48,8 +48,6 @@ To terminate the provider session when any callback fails, opt into fail-fast be
 smoke 'redis://127.0.0.1:6379?channel=events&callback=https%3A%2F%2Fexample.com%2Fhook&callback-policy=fail-fast'
 ```
 
-The CLI reports non-fatal callback failures to stderr. For detached webhook-only subscriptions that stderr is captured in `smoke/background.log`.
-
 Multiple direct and pattern subscriptions can share one Redis Pub/Sub connection:
 
 ```sh
@@ -63,7 +61,35 @@ smoke 'rediss://user:password@redis.example.com:6380?channel=events&callback=std
 smoke 'redis+unix:///run/redis/redis.sock?channel=events&callback=stdout'
 ```
 
-Use `db=` for a Redis database number. Do not put webhook credentials in DNS aliases; resolve them from a local/secret configuration layer before constructing the final provider URL.
+## Logmash
+
+`cmd/logmash` is the human-facing wrapper for DNS-resolved ephemeral receiving and routing:
+
+```sh
+logmash west events
+logmash west events deployments
+logmash west events --pattern 'worker:*'
+logmash west events --callback https://example.com/hook
+logmash west events --no-stdout --callback https://example.com/hook
+```
+
+A shorthand profile such as `west` resolves as `west.logma.sh`. The DNS profile supplies provider connection metadata; channels, patterns and callbacks remain invocation-time inputs.
+
+`logma.sh` is intentionally topology-agnostic. A DNS SRV record may currently target a Fatline service alias such as `fatline.west.farcaster.world`, a standalone Redis host, or another compatible endpoint. Smoke and Logmash do not inspect that naming and do not need to know what deployment implements the service.
+
+In particular, there is no `IsFatline` or `IsFarcaster` provider behavior:
+
+```text
+west.logma.sh
+    -> TXT/SRV
+    -> host + port + TLS + auth profile
+    -> Redis Target
+    -> SUBSCRIBE / PSUBSCRIBE
+```
+
+Farcaster host naming and Fatline service naming belong to deployment/DNS configuration, not to the Redis provider.
+
+Logmash is also deliberately lighter than durable Logma running inside Fatline. Logmash receives and routes messages directly over provider transport and does not require an HTTP control plane or create durable Channel/Subscriber/Publisher graph state.
 
 ## Go composition
 
@@ -82,9 +108,7 @@ import (
 )
 
 func main() {
-    registry, err := smoke.New(
-        redisprovider.New(),
-    )
+    registry, err := smoke.New(redisprovider.New())
     if err != nil {
         panic(err)
     }
@@ -105,6 +129,8 @@ func main() {
 }
 ```
 
+Typed Redis targets are the preferred in-process composition boundary when the caller has already resolved connection metadata. Raw URLs remain the portable CLI/interchange form.
+
 `callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly:
 
 ```go
@@ -113,7 +139,7 @@ if err := dispatcher.SetFailurePolicy(callback.FailFast); err != nil {
 }
 ```
 
-Callback parsing is also reusable:
+Callback parsing is reusable:
 
 ```go
 dispatcher, err := callback.Parse([]string{
@@ -133,11 +159,9 @@ type Provider interface {
 }
 ```
 
-The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding stays in `cmd/smoke`, so importing a provider never unexpectedly daemonizes the caller.
+The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding stays in command packages, so importing a provider never unexpectedly daemonizes the caller.
 
 Callback failure policy also stays outside providers. That gives Redis, SSE, and future providers the same callback semantics without duplicating error-handling behavior in each transport.
-
-The intended next providers can therefore be added independently, for example HTTP artifact resolution, SSE, Git/forge operations, or other stream transports.
 
 ## Redis callback envelope
 
