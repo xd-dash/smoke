@@ -6,12 +6,16 @@ import (
 )
 
 func TestOptionsTCP(t *testing.T) {
-	u, err := url.Parse("rediss://user:secret@example.com:6380?db=2&channel=events&callback=stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts, err := options(u)
+	opts, err := optionsForTarget(Target{
+		Network:    "tcp",
+		Host:       "example.com",
+		Port:       6380,
+		TLS:        true,
+		ServerName: "example.com",
+		Username:   "user",
+		Password:   "secret",
+		DB:         2,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
