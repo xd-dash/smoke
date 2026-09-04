@@ -6,7 +6,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/xd-dash/smoke/callback"
@@ -15,10 +17,22 @@ import (
 	"github.com/xd-dash/smoke/session"
 )
 
-type cliArgs struct {
+type sourceSelector struct {
+	Profile string
+	Value   string
+	Pattern bool
+}
+
+type sourceSubscription struct {
 	Profile      string
 	Channels     []string
 	Patterns     []string
+	Target       redisprovider.Target
+	AuthProvider string
+}
+
+type cliArgs struct {
+	Sources      []sourceSelector
 	Into         []intoSpec
 	Callbacks    []string // legacy URL form; --into is preferred
 	Detached     bool
@@ -73,7 +87,7 @@ func main() {
 		die("callback policy: %v", err)
 	}
 	dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
-		fmt.Fprintf(os.Stderr, "logmash: callback failure provider=%s channel=%s: %v\n", message.Provider, message.Channel, err)
+		fmt.Fprintf(os.Stderr, "logmash: callback failure source=%s provider=%s channel=%s: %v\n", message.Source, message.Provider, message.Channel, err)
 	})
 
 	// Detachment is explicit. Callback shape never implicitly daemonizes a
@@ -91,23 +105,56 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	profile := normalizeProfile(cfg.Profile)
-	target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile)
+	subscriptions, err := resolveSources(ctx, cfg)
 	if err != nil {
-		die("resolve %s: %v", profile, err)
+		die("sources: %v", err)
 	}
 
-	authProvider := cfg.AuthProvider
-	if authProvider == "" {
-		authProvider = target.AuthProvider
+	qualifiedChannels, qualifiedPatterns, profiles := sessionSelectors(subscriptions)
+	handle, record, err := session.Begin(session.Record{
+		Profile:      strings.Join(profiles, ","),
+		Target:       fmt.Sprintf("sources=%d", len(subscriptions)),
+		Channels:     qualifiedChannels,
+		Patterns:     qualifiedPatterns,
+		Callbacks:    callbackValues,
+		AuthProvider: sessionAuthProvider(subscriptions),
+	})
+	if err != nil {
+		die("session registry: %v", err)
 	}
-	if authProvider == "" {
-		authProvider = "auto-env"
+	defer handle.Close()
+	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d sources=%d detached=%t\n", record.ID, record.PID, len(subscriptions), cfg.Detached)
+
+	if err := runSources(ctx, subscriptions, dispatcher); err != nil && ctx.Err() == nil {
+		die("%v", err)
 	}
-	authProfile := target.AuthProfile
-	if authProfile == "" {
-		authProfile = cfg.Profile
+}
+
+func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, error) {
+	type grouped struct {
+		channels map[string]struct{}
+		patterns map[string]struct{}
 	}
+	groups := map[string]*grouped{}
+	for _, selector := range cfg.Sources {
+		profile := normalizeProfile(selector.Profile)
+		group := groups[profile]
+		if group == nil {
+			group = &grouped{channels: map[string]struct{}{}, patterns: map[string]struct{}{}}
+			groups[profile] = group
+		}
+		if selector.Pattern {
+			group.patterns[selector.Value] = struct{}{}
+		} else {
+			group.channels[selector.Value] = struct{}{}
+		}
+	}
+
+	profiles := make([]string, 0, len(groups))
+	for profile := range groups {
+		profiles = append(profiles, profile)
+	}
+	sort.Strings(profiles)
 
 	authRegistry, err := redisauth.New(
 		redisauth.None{},
@@ -116,36 +163,123 @@ func main() {
 		redisauth.AutoEnv{},
 	)
 	if err != nil {
-		die("auth registry: %v", err)
+		return nil, fmt.Errorf("auth registry: %w", err)
 	}
-	credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile)
-	if err != nil {
-		die("auth provider %s: %v", authProvider, err)
-	}
-	target = credentials.Apply(target)
 
-	handle, record, err := session.Begin(session.Record{
-		Profile:      profile,
-		Target:       displayTarget(target),
-		Channels:     append([]string(nil), cfg.Channels...),
-		Patterns:     append([]string(nil), cfg.Patterns...),
-		Callbacks:    callbackValues,
-		AuthProvider: authProvider,
-	})
-	if err != nil {
-		die("session registry: %v", err)
+	out := make([]sourceSubscription, 0, len(profiles))
+	for _, profile := range profiles {
+		target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", profile, err)
+		}
+		authProvider := cfg.AuthProvider
+		if authProvider == "" {
+			authProvider = target.AuthProvider
+		}
+		if authProvider == "" {
+			authProvider = "auto-env"
+		}
+		authProfile := target.AuthProfile
+		if authProfile == "" {
+			authProfile = strings.TrimSuffix(profile, ".logma.sh")
+		}
+		credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile)
+		if err != nil {
+			return nil, fmt.Errorf("%s auth provider %s: %w", profile, authProvider, err)
+		}
+		target = credentials.Apply(target)
+		// Preserve logical source identity in every callback envelope. The
+		// physical Redis endpoint may change independently through DNS.
+		target.Source = profile
+		group := groups[profile]
+		out = append(out, sourceSubscription{
+			Profile:      profile,
+			Channels:     sortedKeys(group.channels),
+			Patterns:     sortedKeys(group.patterns),
+			Target:       target,
+			AuthProvider: authProvider,
+		})
 	}
-	defer handle.Close()
-	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d detached=%t\n", record.ID, record.PID, cfg.Detached)
+	return out, nil
+}
 
-	err = redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
-		Target:   target,
-		Channels: cfg.Channels,
-		Patterns: cfg.Patterns,
-	}, dispatcher)
-	if err != nil && ctx.Err() == nil {
-		die("%v", err)
+func runSources(parent context.Context, subscriptions []sourceSubscription, dispatcher *callback.Dispatcher) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	errCh := make(chan error, len(subscriptions))
+	var wg sync.WaitGroup
+	for _, source := range subscriptions {
+		source := source
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
+				Target:   source.Target,
+				Channels: source.Channels,
+				Patterns: source.Patterns,
+			}, dispatcher)
+			if err != nil && ctx.Err() == nil {
+				errCh <- fmt.Errorf("source %s: %w", source.Profile, err)
+				cancel()
+			}
+		}()
 	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errCh:
+		<-done
+		return err
+	case <-parent.Done():
+		cancel()
+		<-done
+		return nil
+	case <-done:
+		select {
+		case err := <-errCh:
+			return err
+		default:
+			return nil
+		}
+	}
+}
+
+func sessionSelectors(subscriptions []sourceSubscription) (channels, patterns, profiles []string) {
+	for _, source := range subscriptions {
+		profiles = append(profiles, source.Profile)
+		short := strings.TrimSuffix(source.Profile, ".logma.sh")
+		for _, channel := range source.Channels {
+			channels = append(channels, short+":"+channel)
+		}
+		for _, pattern := range source.Patterns {
+			patterns = append(patterns, short+":"+pattern)
+		}
+	}
+	return channels, patterns, profiles
+}
+
+func sessionAuthProvider(subscriptions []sourceSubscription) string {
+	providers := map[string]struct{}{}
+	for _, source := range subscriptions {
+		providers[source.AuthProvider] = struct{}{}
+	}
+	values := sortedKeys(providers)
+	return strings.Join(values, ",")
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func listSessions() {
@@ -158,7 +292,7 @@ func listSessions() {
 		return
 	}
 	for _, record := range records {
-		fmt.Printf("%s pid=%d profile=%s %s\n", record.ID, record.PID, record.Profile, record.Target)
+		fmt.Printf("%s pid=%d profiles=%s %s\n", record.ID, record.PID, record.Profile, record.Target)
 		if len(record.Channels) > 0 {
 			fmt.Printf("  channels: %s\n", strings.Join(record.Channels, ", "))
 		}
@@ -186,9 +320,13 @@ func parseArgs(args []string) (cliArgs, error) {
 		case "--pattern", "-p":
 			i++
 			if i >= len(args) {
-				return cfg, fmt.Errorf("%s requires a value", args[i-1])
+				return cfg, fmt.Errorf("%s requires SOURCE:PATTERN", args[i-1])
 			}
-			cfg.Patterns = append(cfg.Patterns, args[i])
+			selector, err := parseSourceSelector(args[i], true)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Sources = append(cfg.Sources, selector)
 		case "--into":
 			if i+3 >= len(args) {
 				return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET")
@@ -224,23 +362,35 @@ func parseArgs(args []string) (cliArgs, error) {
 			if strings.HasPrefix(args[i], "-") {
 				return cfg, fmt.Errorf("unknown option %q", args[i])
 			}
-			if cfg.Profile == "" {
-				cfg.Profile = args[i]
-			} else {
-				cfg.Channels = append(cfg.Channels, args[i])
+			selector, err := parseSourceSelector(args[i], false)
+			if err != nil {
+				return cfg, err
 			}
+			cfg.Sources = append(cfg.Sources, selector)
 		}
 	}
-	if cfg.Profile == "" {
-		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--detached] [--into PROVIDER PROFILE TARGET]")
-	}
-	if len(cfg.Channels) == 0 && len(cfg.Patterns) == 0 {
-		return cfg, fmt.Errorf("at least one channel or --pattern is required")
+	if len(cfg.Sources) == 0 {
+		return cfg, fmt.Errorf("usage: logmash SOURCE:CHANNEL [SOURCE:CHANNEL ...] [--pattern SOURCE:GLOB] [--detached] [--into PROVIDER PROFILE TARGET]")
 	}
 	if cfg.Detached && len(cfg.Into) == 0 && len(cfg.Callbacks) == 0 {
 		return cfg, fmt.Errorf("--detached requires at least one --into destination")
 	}
 	return cfg, nil
+}
+
+func parseSourceSelector(value string, pattern bool) (sourceSelector, error) {
+	value = strings.TrimSpace(value)
+	profile, item, ok := strings.Cut(value, ":")
+	profile = strings.TrimSpace(profile)
+	item = strings.TrimSpace(item)
+	if !ok || profile == "" || item == "" {
+		kind := "CHANNEL"
+		if pattern {
+			kind = "PATTERN"
+		}
+		return sourceSelector{}, fmt.Errorf("%q must be SOURCE:%s", value, kind)
+	}
+	return sourceSelector{Profile: profile, Value: item, Pattern: pattern}, nil
 }
 
 func normalizeProfile(name string) string {
