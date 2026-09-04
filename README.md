@@ -34,6 +34,22 @@ smoke 'redis://127.0.0.1:6379?channel=events&callback=stdout&callback=https%3A%2
 
 The stdout callback keeps the process attached to the foreground. Each message is fanned out to both callbacks.
 
+Callback failures are non-fatal by default. A failed webhook is reported, but the Redis subscription remains active and continues handling later messages:
+
+```text
+callback failure
+    -> report error
+    -> keep Redis subscription alive
+```
+
+To terminate the provider session when any callback fails, opt into fail-fast behavior:
+
+```sh
+smoke 'redis://127.0.0.1:6379?channel=events&callback=https%3A%2F%2Fexample.com%2Fhook&callback-policy=fail-fast'
+```
+
+The CLI reports non-fatal callback failures to stderr. For detached webhook-only subscriptions that stderr is captured in `smoke/background.log`.
+
 Multiple direct and pattern subscriptions can share one Redis Pub/Sub connection:
 
 ```sh
@@ -58,6 +74,7 @@ package main
 
 import (
     "context"
+    "log"
 
     "github.com/xd-dash/smoke"
     "github.com/xd-dash/smoke/callback"
@@ -73,6 +90,9 @@ func main() {
     }
 
     dispatcher := callback.New(callback.Stdout{})
+    dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
+        log.Printf("provider=%s channel=%s callback error: %v", message.Provider, message.Channel, err)
+    })
 
     err = registry.Run(
         context.Background(),
@@ -82,6 +102,14 @@ func main() {
     if err != nil {
         panic(err)
     }
+}
+```
+
+`callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly:
+
+```go
+if err := dispatcher.SetFailurePolicy(callback.FailFast); err != nil {
+    panic(err)
 }
 ```
 
@@ -106,6 +134,8 @@ type Provider interface {
 ```
 
 The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding stays in `cmd/smoke`, so importing a provider never unexpectedly daemonizes the caller.
+
+Callback failure policy also stays outside providers. That gives Redis, SSE, and future providers the same callback semantics without duplicating error-handling behavior in each transport.
 
 The intended next providers can therefore be added independently, for example HTTP artifact resolution, SSE, Git/forge operations, or other stream transports.
 
