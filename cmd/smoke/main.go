@@ -32,6 +32,24 @@ func main() {
 		die("at least one callback is required")
 	}
 
+	policy := callback.Continue
+	if raw := u.Query().Get("callback-policy"); raw != "" {
+		policy = callback.FailurePolicy(raw)
+	}
+	if err := dispatcher.SetFailurePolicy(policy); err != nil {
+		die("callback policy: %v", err)
+	}
+	dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
+		fmt.Fprintf(
+			os.Stderr,
+			"smoke: callback failure provider=%s channel=%q pattern=%q: %v\n",
+			message.Provider,
+			message.Channel,
+			message.Pattern,
+			err,
+		)
+	})
+
 	if !dispatcher.HasStdout() && os.Getenv("SMOKE_DETACHED") != "1" {
 		pid, logPath, err := detach(rawURL)
 		if err != nil {
