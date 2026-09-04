@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/xd-dash/smoke/callback"
 	redisprovider "github.com/xd-dash/smoke/provider/redis"
 	redisauth "github.com/xd-dash/smoke/provider/redis/auth"
+	"github.com/xd-dash/smoke/session"
 )
 
 type cliArgs struct {
@@ -24,6 +26,24 @@ type cliArgs struct {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "list", "ls":
+			listSessions()
+			return
+		case "stop", "end":
+			if len(os.Args) != 3 {
+				die("usage: logmash stop <session-id>")
+			}
+			record, err := session.Stop(os.Args[2])
+			if err != nil {
+				die("%v", err)
+			}
+			fmt.Printf("stopping %s pid=%d profile=%s\n", record.ID, record.PID, record.Profile)
+			return
+		}
+	}
+
 	cfg, err := parseArgs(os.Args[1:])
 	if err != nil {
 		die("%v", err)
@@ -52,7 +72,7 @@ func main() {
 		if err != nil {
 			die("detach: %v", err)
 		}
-		fmt.Fprintf(os.Stderr, "logmash: started pid=%d log=%s\n", pid, logPath)
+		fmt.Fprintf(os.Stderr, "logmash: started pid=%d log=%s; use `logmash list` for session id\n", pid, logPath)
 		return
 	}
 
@@ -92,6 +112,20 @@ func main() {
 	}
 	target = credentials.Apply(target)
 
+	handle, record, err := session.Begin(session.Record{
+		Profile:      profile,
+		Target:       displayTarget(target),
+		Channels:     append([]string(nil), cfg.Channels...),
+		Patterns:     append([]string(nil), cfg.Patterns...),
+		Callbacks:    callbackValues,
+		AuthProvider: authProvider,
+	})
+	if err != nil {
+		die("session registry: %v", err)
+	}
+	defer handle.Close()
+	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d\n", record.ID, record.PID)
+
 	err = redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
 		Target:   target,
 		Channels: cfg.Channels,
@@ -100,6 +134,41 @@ func main() {
 	if err != nil && ctx.Err() == nil {
 		die("%v", err)
 	}
+}
+
+func listSessions() {
+	records, err := session.List()
+	if err != nil {
+		die("list sessions: %v", err)
+	}
+	if len(records) == 0 {
+		fmt.Println("no active logmash sessions")
+		return
+	}
+	for _, record := range records {
+		fmt.Printf("%s pid=%d profile=%s target=%s\n", record.ID, record.PID, record.Profile, record.Target)
+		if len(record.Channels) > 0 {
+			fmt.Printf("  channels: %s\n", strings.Join(record.Channels, ", "))
+		}
+		if len(record.Patterns) > 0 {
+			fmt.Printf("  patterns: %s\n", strings.Join(record.Patterns, ", "))
+		}
+		fmt.Printf("  callbacks: %s\n", strings.Join(record.Callbacks, ", "))
+		if record.AuthProvider != "" {
+			fmt.Printf("  auth: %s\n", record.AuthProvider)
+		}
+	}
+}
+
+func displayTarget(target redisprovider.Target) string {
+	if target.Network == "unix" {
+		return "unix:" + target.Socket
+	}
+	scheme := "redis"
+	if target.TLS {
+		scheme = "rediss"
+	}
+	return scheme + "://" + net.JoinHostPort(target.Host, fmt.Sprintf("%d", target.Port))
 }
 
 func parseArgs(args []string) (cliArgs, error) {
