@@ -8,7 +8,8 @@ import (
 )
 
 // DNSResolver resolves provider-oriented TXT + SRV discovery records.
-// Credentials are intentionally not resolved from DNS.
+// Credentials are intentionally not resolved from DNS. DNS may select a
+// non-secret auth provider and profile name used by the caller's secret layer.
 type DNSResolver struct {
 	Resolver *net.Resolver
 }
@@ -63,12 +64,13 @@ func (r DNSResolver) Resolve(ctx context.Context, name string) (Target, error) {
 	srv := srvs[0]
 	host := strings.TrimSuffix(srv.Target, ".")
 	return Target{
-		Network:     "tcp",
-		Host:        host,
-		Port:        int(srv.Port),
-		TLS:         tlsEnabled,
-		ServerName:  host,
-		AuthProfile: meta["auth"],
-		Source:      name,
+		Network:      "tcp",
+		Host:         host,
+		Port:         int(srv.Port),
+		TLS:          tlsEnabled,
+		ServerName:   host,
+		AuthProvider: meta["auth-provider"],
+		AuthProfile:  meta["auth"],
+		Source:       name,
 	}, nil
 }
