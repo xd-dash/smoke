@@ -7,10 +7,13 @@ import (
 	"github.com/xd-dash/smoke/callback"
 )
 
-func TestParseArgsInterspersedOptions(t *testing.T) {
+func TestParseArgsSourceQualified(t *testing.T) {
 	got, err := parseArgs([]string{
-		"west", "events", "deployments",
-		"--pattern", "worker:*",
+		"west:events",
+		"west:ratelimiters",
+		"east:events",
+		"west:ratelimiters",
+		"--pattern", "east:worker:*",
 		"--into", "axiom", "east", "redis-events",
 		"--into", "axiom", "eu", "redis-events",
 		"--callback-policy", "fail-fast",
@@ -20,14 +23,15 @@ func TestParseArgsInterspersedOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Profile != "west" {
-		t.Fatalf("profile = %q", got.Profile)
+	wantSources := []sourceSelector{
+		{Profile: "west", Value: "events"},
+		{Profile: "west", Value: "ratelimiters"},
+		{Profile: "east", Value: "events"},
+		{Profile: "west", Value: "ratelimiters"},
+		{Profile: "east", Value: "worker:*", Pattern: true},
 	}
-	if !reflect.DeepEqual(got.Channels, []string{"events", "deployments"}) {
-		t.Fatalf("channels = %#v", got.Channels)
-	}
-	if !reflect.DeepEqual(got.Patterns, []string{"worker:*"}) {
-		t.Fatalf("patterns = %#v", got.Patterns)
+	if !reflect.DeepEqual(got.Sources, wantSources) {
+		t.Fatalf("sources = %#v", got.Sources)
 	}
 	wantInto := []intoSpec{
 		{Provider: "axiom", Profile: "east", Target: "redis-events"},
@@ -44,6 +48,30 @@ func TestParseArgsInterspersedOptions(t *testing.T) {
 	}
 	if got.AuthProvider != "acl-env" {
 		t.Fatalf("auth provider = %q", got.AuthProvider)
+	}
+}
+
+func TestParseSourceSelector(t *testing.T) {
+	got, err := parseSourceSelector("west:events", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Profile != "west" || got.Value != "events" || got.Pattern {
+		t.Fatalf("selector = %#v", got)
+	}
+
+	pattern, err := parseSourceSelector("east:worker:*", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pattern.Profile != "east" || pattern.Value != "worker:*" || !pattern.Pattern {
+		t.Fatalf("pattern = %#v", pattern)
+	}
+}
+
+func TestSourceSelectorRequiresRelationship(t *testing.T) {
+	if _, err := parseArgs([]string{"west", "events"}); err == nil {
+		t.Fatal("expected unqualified source/channel grammar to fail")
 	}
 }
 
@@ -67,7 +95,7 @@ func TestResolveIntoAxiomAliases(t *testing.T) {
 }
 
 func TestForegroundNeedsNoDestination(t *testing.T) {
-	got, err := parseArgs([]string{"west", "events"})
+	got, err := parseArgs([]string{"west:events"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +105,7 @@ func TestForegroundNeedsNoDestination(t *testing.T) {
 }
 
 func TestDetachedRequiresDestination(t *testing.T) {
-	if _, err := parseArgs([]string{"west", "events", "--detached"}); err == nil {
+	if _, err := parseArgs([]string{"west:events", "--detached"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -93,7 +121,7 @@ func TestNormalizeProfile(t *testing.T) {
 
 func TestLegacyNoStdoutAliasesDetached(t *testing.T) {
 	got, err := parseArgs([]string{
-		"west", "events", "--no-stdout",
+		"west:events", "--no-stdout",
 		"--callback", "https://example.com/hook",
 	})
 	if err != nil {
