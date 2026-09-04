@@ -13,6 +13,7 @@ func TestParseArgsInterspersedOptions(t *testing.T) {
 		"--pattern", "worker:*",
 		"-c", "https://example.com/hook",
 		"--callback-policy", "fail-fast",
+		"--auth-provider", "acl-env",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +32,9 @@ func TestParseArgsInterspersedOptions(t *testing.T) {
 	}
 	if got.Policy != callback.FailFast {
 		t.Fatalf("policy = %q", got.Policy)
+	}
+	if got.AuthProvider != "acl-env" {
+		t.Fatalf("auth provider = %q", got.AuthProvider)
 	}
 }
 
