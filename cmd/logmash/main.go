@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,35 +12,23 @@ import (
 	redisprovider "github.com/xd-dash/smoke/provider/redis"
 )
 
-type stringsFlag []string
-
-func (s *stringsFlag) String() string { return strings.Join(*s, ",") }
-func (s *stringsFlag) Set(v string) error { *s = append(*s, v); return nil }
+type cliArgs struct {
+	Profile   string
+	Channels  []string
+	Patterns  []string
+	Callbacks []string
+	NoStdout  bool
+	Policy    callback.FailurePolicy
+}
 
 func main() {
-	var patterns stringsFlag
-	var callbacks stringsFlag
-	var noStdout bool
-	var policy string
-
-	flag.Var(&patterns, "pattern", "Redis PSUBSCRIBE pattern; repeatable")
-	flag.Var(&callbacks, "callback", "callback URL; repeatable")
-	flag.BoolVar(&noStdout, "no-stdout", false, "disable the default stdout callback")
-	flag.StringVar(&policy, "callback-policy", string(callback.Continue), "continue or fail-fast")
-	flag.Parse()
-
-	args := flag.Args()
-	if len(args) < 1 {
-		die("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--callback URL] [--no-stdout]")
-	}
-	profile := normalizeProfile(args[0])
-	channels := args[1:]
-	if len(channels) == 0 && len(patterns) == 0 {
-		die("at least one channel or --pattern is required")
+	cfg, err := parseArgs(os.Args[1:])
+	if err != nil {
+		die("%v", err)
 	}
 
-	callbackValues := append([]string(nil), callbacks...)
-	if !noStdout {
+	callbackValues := append([]string(nil), cfg.Callbacks...)
+	if !cfg.NoStdout {
 		callbackValues = append([]string{"stdout"}, callbackValues...)
 	}
 	dispatcher, err := callback.Parse(callbackValues)
@@ -51,7 +38,7 @@ func main() {
 	if dispatcher.Empty() {
 		die("at least one callback is required")
 	}
-	if err := dispatcher.SetFailurePolicy(callback.FailurePolicy(policy)); err != nil {
+	if err := dispatcher.SetFailurePolicy(cfg.Policy); err != nil {
 		die("callback policy: %v", err)
 	}
 	dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
@@ -70,21 +57,62 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	profile := normalizeProfile(cfg.Profile)
 	target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile)
 	if err != nil {
 		die("resolve %s: %v", profile, err)
 	}
 	applyEnvironmentAuth(&target)
 
-	provider := redisprovider.New()
-	err = provider.RunSubscription(ctx, redisprovider.Subscription{
+	err = redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
 		Target:   target,
-		Channels: channels,
-		Patterns: patterns,
+		Channels: cfg.Channels,
+		Patterns: cfg.Patterns,
 	}, dispatcher)
 	if err != nil && ctx.Err() == nil {
 		die("%v", err)
 	}
+}
+
+func parseArgs(args []string) (cliArgs, error) {
+	cfg := cliArgs{Policy: callback.Continue}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pattern", "-p":
+			i++
+			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
+			cfg.Patterns = append(cfg.Patterns, args[i])
+		case "--callback", "-c":
+			i++
+			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
+			cfg.Callbacks = append(cfg.Callbacks, args[i])
+		case "--callback-policy":
+			i++
+			if i >= len(args) { return cfg, fmt.Errorf("--callback-policy requires a value") }
+			cfg.Policy = callback.FailurePolicy(args[i])
+		case "--no-stdout", "-q":
+			cfg.NoStdout = true
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return cfg, fmt.Errorf("unknown option %q", args[i])
+			}
+			if cfg.Profile == "" {
+				cfg.Profile = args[i]
+			} else {
+				cfg.Channels = append(cfg.Channels, args[i])
+			}
+		}
+	}
+	if cfg.Profile == "" {
+		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--callback URL] [--no-stdout]")
+	}
+	if len(cfg.Channels) == 0 && len(cfg.Patterns) == 0 {
+		return cfg, fmt.Errorf("at least one channel or --pattern is required")
+	}
+	if cfg.NoStdout && len(cfg.Callbacks) == 0 {
+		return cfg, fmt.Errorf("--no-stdout requires at least one --callback")
+	}
+	return cfg, nil
 }
 
 func normalizeProfile(name string) string {
