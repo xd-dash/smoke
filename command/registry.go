@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"unicode"
 )
 
 // Command describes one command Smoke can resolve/install and then execute.
@@ -35,12 +37,20 @@ func New(commands ...Command) (*Registry, error) {
 	return r, nil
 }
 
-// Resolve returns an executable path. Existing PATH/sibling installations win;
-// otherwise a registered Go command is installed into Smoke's user bin dir.
+// Resolve returns an executable path. An explicit SMOKE_COMMAND_<NAME>
+// registration wins, then PATH/sibling installations, then the registered
+// installer. This lets Smoke select among multiple command implementations
+// without understanding anything about the command's own providers.
 func (r *Registry) Resolve(ctx context.Context, name string) (string, error) {
 	command, ok := r.commands[name]
 	if !ok {
 		return "", fmt.Errorf("unregistered command %q", name)
+	}
+	if registered := strings.TrimSpace(os.Getenv(commandEnvName(name))); registered != "" {
+		if info, err := os.Stat(registered); err == nil && !info.IsDir() {
+			return registered, nil
+		}
+		return "", fmt.Errorf("%s points to unavailable command %q", commandEnvName(name), registered)
 	}
 	if path, err := exec.LookPath(name); err == nil {
 		return path, nil
@@ -82,6 +92,19 @@ func installGoCommand(ctx context.Context, command Command) (string, error) {
 		return "", fmt.Errorf("installed command %q not found at %s: %w", command.Name, path, err)
 	}
 	return path, nil
+}
+
+func commandEnvName(name string) string {
+	var b strings.Builder
+	b.WriteString("SMOKE_COMMAND_")
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToUpper(r))
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func userBinDir() (string, error) {
