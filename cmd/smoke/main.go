@@ -18,7 +18,7 @@ func main() {
 	registry, err := command.New(
 		command.Command{
 			Name:      "logmash",
-			GoPackage: "github.com/xd-dash/smoke/cmd/logmash@latest",
+			GoPackage: "github.com/xd-dash/smoke/cmd/logmash",
 		},
 	)
 	if err != nil {
