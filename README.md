@@ -1,254 +1,224 @@
 # smoke
 
-`smoke` is a composable URL-provider runtime. URL schemes select providers; providers produce behavior; callbacks consume provider messages.
+`smoke` is the bootstrap/resolution front-end for registered commands. Once a command is resolved, Smoke gets out of the way.
 
-The first transport provider is Redis Pub/Sub. Subscriptions are intentionally ephemeral: nothing is stored in Redis as durable Logma graph state. Process lifetime is subscription lifetime.
-
-Terminology in this repository and its Huram integration:
-
-- `Logma` means `xd-dash/logma`, including its durable Channel/Subscriber/Callback/Publisher graph and runtime reconciliation.
-- `Logmash` / `logma.sh` means the client implemented here in Smoke for direct receiving/routing without requiring the Logma HTTP control plane.
-
-## CLI
-
-Subscribe and print payloads to stdout:
+The first registered command is `logmash`.
 
 ```sh
-smoke 'redis://127.0.0.1:6379?channel=events&callback=stdout'
+smoke logmash west events
 ```
 
-Pattern-subscribe:
+and, once `logmash` is installed/resolved:
 
 ```sh
-smoke 'redis://127.0.0.1:6379?pattern=dev:*&callback=stdout'
+logmash west events
 ```
 
-Webhook only:
+have the same Logmash semantics. On Unix, Smoke replaces itself with the resolved command using `exec`, so terminal ownership and signal behavior are the same as invoking Logmash directly.
 
-```sh
-smoke 'redis://127.0.0.1:6379?channel=events&callback=https%3A%2F%2Fexample.com%2Fhook'
+Smoke does not know Redis, Axiom, Cloudflare, Fatline, or Logmash DNS grammar. Those are owned below the registered command boundary.
+
+## Command resolution
+
+For a registered command such as `logmash`, Smoke resolves in this order:
+
+```text
+SMOKE_COMMAND_LOGMASH=/explicit/path
+        ↓
+PATH
+        ↓
+sibling executable next to smoke
+        ↓
+registered installer
 ```
 
-Because stdout is not a callback, the CLI starts a detached child and immediately returns control to the shell. Background errors are appended to the user cache at `smoke/background.log`.
+The explicit environment registration makes it possible to select between multiple Logmash builds/wrappers on one machine without adding Logmash-specific selection logic to Smoke.
 
-Stdout and webhook together:
+If Logmash is not already present, Smoke installs the registered Go command into `~/.local/bin` (or `SMOKE_BIN_DIR`). When Smoke itself has module build-version identity, the installer uses the same module version for Logmash so the bootstrapped command matches the registering Smoke build.
 
-```sh
-smoke 'redis://127.0.0.1:6379?channel=events&callback=stdout&callback=https%3A%2F%2Fexample.com%2Fhook'
+The intended bootstrap chain is:
+
+```text
+install.xd.run/smoke
+        ↓
+install/verify smoke
+        ↓
+smoke logmash ...
+        ↓
+resolve or install logmash
+        ↓
+exec logmash ...
 ```
 
-Callback failures are non-fatal by default. A failed callback is reported while the Redis subscription remains active. Use `callback-policy=fail-fast` only when callback failure should terminate the provider session.
-
-Multiple direct and pattern subscriptions can share one Redis Pub/Sub connection:
-
-```sh
-smoke 'redis://127.0.0.1:6379?channel=events&channel=deployments&pattern=worker:*&callback=stdout'
-```
-
-TLS and Unix sockets use the same transport provider:
-
-```sh
-smoke 'rediss://user:password@redis.example.com:6380?channel=events&callback=stdout'
-smoke 'redis+unix:///run/redis/redis.sock?channel=events&callback=stdout'
-```
+After that first resolution, users may call `logmash` directly.
 
 ## Logmash
 
-`cmd/logmash` is the human-facing wrapper for DNS-resolved receiving and routing:
+`logmash` owns DNS/provider resolution and Pub/Sub session behavior.
+
+Basic use:
 
 ```sh
 logmash west events
 logmash west events deployments
 logmash west events --pattern 'worker:*'
-logmash west events --callback https://example.com/hook
-logmash west events --no-stdout --callback https://example.com/hook
 ```
 
-A shorthand profile such as `west` resolves as `west.logma.sh`. The DNS profile supplies provider connection metadata; channels, patterns and callbacks remain invocation-time inputs.
-
-`logma.sh` is intentionally topology-agnostic. A DNS SRV record may target a Fatline service alias, a standalone Redis host, or another compatible endpoint. Smoke and Logmash do not inspect naming to infer deployment type.
+A shorthand Redis profile such as `west` resolves as `west.logma.sh`.
 
 ```text
 west.logma.sh
     -> TXT/SRV
-    -> host + port + TLS + auth-provider + auth-profile
-    -> Redis Target
-    -> resolve credentials locally
+    -> Redis-compatible host + port + TLS + auth metadata
     -> SUBSCRIBE / PSUBSCRIBE
 ```
 
-Logmash is deliberately lighter than durable Logma running inside Fatline. It does not create durable Channel/Subscriber/Publisher graph resources, but it supervises its own live client processes so running subscriptions can be inspected and explicitly stopped.
+The DNS may be managed in Cloudflare, but Cloudflare is a Logmash deployment/resolution concern. Smoke has no Cloudflare provider or Cloudflare API dependency.
 
-## Logmash session supervision
+## Human-readable routing grammar
 
-Each running Logmash subscription writes a small local process-bound session record containing its session ID, PID, profile, resolved endpoint summary, channels/patterns, auth provider, and sanitized callback descriptors. This is operational supervision, not durable Logma state.
+Managed callback destinations use `--into` rather than forcing users to spell URLs and query strings.
+
+```sh
+logmash west events \
+  --into axiom east mydataset \
+  --into axiom eu mydataset
+```
+
+The same command through Smoke is identical after command resolution:
+
+```sh
+smoke logmash west events \
+  --into axiom east mydataset \
+  --into axiom eu mydataset
+```
+
+Current Axiom aliases are:
+
+```text
+axiom east <dataset>
+    -> axiom-us-east-1.logma.sh
+
+axiom eu <dataset>
+    -> axiom-eu-central-1.logma.sh
+
+axiom default <dataset>
+    -> axiom.logma.sh
+```
+
+An explicit FQDN may be used in the profile position when needed.
+
+Internally, for example:
+
+```text
+--into axiom eu mydataset
+        ↓
+axiom://mydataset?profile=axiom-eu-central-1.logma.sh
+        ↓
+DNS profile resolves deployment domain + non-secret auth selector
+        ↓
+POST https://eu-central-1.aws.edge.axiom.co/v1/ingest/mydataset
+```
+
+Dataset names remain runtime input. They are never stored in DNS or Terraform state.
+
+The managed Axiom TXT shape is:
+
+```text
+axiom.logma.sh TXT "smoke=v1;provider=axiom;domain=eu-central-1.aws.edge.axiom.co;auth=axiom-default"
+```
+
+The optional `auth=` field is a non-secret token-profile selector. `auth=axiom-default` resolves to an environment variable such as:
+
+```text
+LOGMASH_AXIOM_AXIOM_DEFAULT_TOKEN
+```
+
+Token values never belong in DNS.
+
+The older `--callback URL` form remains as a compatibility/ad-hoc escape hatch, but managed destinations should prefer `--into`.
+
+## Foreground and detached lifecycle
+
+Detachment is explicit.
+
+Foreground:
+
+```sh
+logmash west events --into axiom eu mydataset
+```
+
+This remains attached to the caller's shell/terminal. Ctrl+C terminates the subscription runtime. On Unix, normal terminal/session teardown also terminates the foreground process through normal process/session signal semantics. No callback choice implicitly daemonizes the process.
+
+Detached:
+
+```sh
+logmash west events \
+  --detached \
+  --into axiom east mydataset \
+  --into axiom eu mydataset
+```
+
+Only `--detached` creates the separate supervised process/session. Detached mode does not attach the default stdout callback and requires at least one destination.
+
+The legacy `--no-stdout` option is retained temporarily as a compatibility alias for `--detached`.
+
+## Session supervision
+
+Logmash keeps lightweight local process-bound supervision state, not durable Logma graph state.
 
 ```sh
 logmash list
 logmash stop <session-id>
 ```
 
-Session records live under the user's cache directory and are removed when the process exits. `logmash list` removes stale records whose PID is no longer alive. Webhook userinfo/query strings and callback secret selectors are not persisted as secret values.
+A session record contains the PID, Redis profile, target summary, channels/patterns, auth provider, and sanitized callback descriptors. Stale PID records are cleaned during listing.
 
-## Axiom callback provider
-
-Axiom is a first-class callback provider alongside `stdout` and HTTP(S) webhooks. The important identity split is:
+Example display:
 
 ```text
-DNS profile
-  deployment domain
-  optional non-secret auth profile
-
-runtime callback
-  dataset id
-  optional ingest parameters
+4c1d8eaa9321 pid=4127 profile=west.logma.sh target=fatline.example:6380 tls=true
+  channels: events
+  callbacks: axiom:mydataset@axiom-eu-central-1.logma.sh
+  auth: acl-env
 ```
 
-Dataset names are never DNS state.
-
-A managed Axiom profile looks like:
-
-```text
-axiom.logma.sh TXT "smoke=v1;provider=axiom;domain=eu-central-1.aws.edge.axiom.co;auth=axiom-default"
-```
-
-There is no dataset in that record. The dataset is selected only when the callback is constructed:
-
-```sh
-logmash west events \
-  --callback 'axiom://redis-events?profile=axiom.logma.sh'
-
-logmash west events \
-  --callback 'axiom://stocks?profile=axiom.logma.sh'
-
-logmash west events \
-  --callback 'axiom://brand-new-dataset?profile=axiom.logma.sh'
-```
-
-All three callbacks resolve the same `axiom.logma.sh` deployment profile. At runtime they construct, respectively:
-
-```text
-https://eu-central-1.aws.edge.axiom.co/v1/ingest/redis-events
-https://eu-central-1.aws.edge.axiom.co/v1/ingest/stocks
-https://eu-central-1.aws.edge.axiom.co/v1/ingest/brand-new-dataset
-```
-
-Creating or choosing a new Axiom dataset therefore requires no DNS or Terraform change.
-
-The optional DNS `auth=` field is a non-secret token-profile selector. For example:
-
-```text
-auth=axiom-default
-    -> LOGMASH_AXIOM_AXIOM_DEFAULT_TOKEN
-```
-
-An explicit callback `token-env=` can override that selector. Without either, the callback falls back to `AXIOM_TOKEN`. Token values never belong in DNS or callback URLs.
-
-Direct `domain=` remains available as an unmanaged/ad-hoc escape hatch:
-
-```sh
-logmash west events \
-  --callback 'axiom://redis-events?domain=us-east-1.aws.edge.axiom.co'
-```
-
-A callback may use `profile=` or `domain=`, not both.
-
-Optional Axiom ingest parameters remain runtime callback inputs:
-
-```text
-timestamp-field=
-timestamp-format=
-event-labels=
-```
-
-Each Pub/Sub message is ingested as the normal Smoke callback envelope rather than assuming the Redis payload itself is JSON:
-
-```json
-{
-  "provider": "redis",
-  "source": "west.logma.sh",
-  "channel": "events",
-  "pattern": "",
-  "payload": "hello"
-}
-```
-
-Callback failure follows the same dispatcher policy as webhooks: report and continue by default, or terminate the subscription with `--callback-policy fail-fast`.
+This is intentionally lighter than `xd-dash/logma`, which remains the durable Channel/Subscriber/Callback/Publisher resource/control-plane implementation.
 
 ## Redis auth providers
 
-Redis transport and Redis authentication are separate composition boundaries. `provider/redis` owns Pub/Sub and connection options. `provider/redis/auth` owns how credentials are resolved.
-
-Built-in Logmash auth providers:
+Redis transport and authentication remain separate composition boundaries.
 
 ```text
 none
-    no Redis AUTH
-
 password-env
-    LOGMASH_REDIS_<PROFILE>_PASSWORD
-    fallback: REDISCLI_AUTH
-
 acl-env
-    LOGMASH_REDIS_<PROFILE>_USERNAME
-    LOGMASH_REDIS_<PROFILE>_PASSWORD
-
 auto-env
-    ACL username+password when both profile variables exist
-    otherwise profile password-only
-    otherwise REDISCLI_AUTH password-only
-    never silently falls back to no-auth
 ```
 
-Example:
+A Fatline-backed Logmash endpoint should normally use a scoped observation principal that can subscribe to the intended channel family without publish/key/admin authority.
 
-```sh
-export LOGMASH_REDIS_WEST_USERNAME=observer
-export LOGMASH_REDIS_WEST_PASSWORD='...'
-logmash west events --auth-provider acl-env
-```
+## Package boundaries
 
-A Redis provider can also be selected non-secretly by DNS:
+The intended ownership is:
 
 ```text
-west.logma.sh TXT "smoke=v1;provider=redis;auth-provider=acl-env;auth=west;tls=true"
+smoke
+  registered-command resolution
+  install/bootstrap
+  exec
+
+logmash
+  provider grammar
+  managed DNS resolution
+  Redis subscription lifecycle
+  callback composition
+  local supervision
+
+xd-dash/logma
+  durable resource graph
+  retained subscriber/publisher/channel state
+  activation/reconciliation
 ```
 
-The auth provider only supplies credentials. It does not grant capabilities. On Fatline-backed endpoints, Logmash should normally authenticate as a scope-materialized observation principal with subscribe-side authority and without publish/key/admin authority.
-
-## Go composition
-
-Providers are ordinary imports. Another program can build a registry with only the transports it wants:
-
-```go
-registry, err := smoke.New(redisprovider.New())
-```
-
-Typed Redis targets are the preferred in-process composition boundary when the caller has already resolved connection metadata. Raw URLs remain the portable CLI/interchange form.
-
-Callbacks remain ordinary `callback.Callback` implementations. A caller that has already resolved deployment metadata may construct Axiom directly:
-
-```go
-dispatcher := callback.New(
-    callback.Stdout{},
-    callback.Axiom{
-        Dataset: "redis-events",
-        Domain:  "us-east-1.aws.edge.axiom.co",
-    },
-)
-```
-
-`callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly.
-
-## Provider contract
-
-A transport provider implements:
-
-```go
-type Provider interface {
-    Schemes() []string
-    Run(context.Context, *url.URL, *callback.Dispatcher) error
-}
-```
-
-The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding and local supervision stay in command/session packages, so importing a provider never unexpectedly daemonizes or registers the caller.
+The lower-level Go packages remain importable for programs that want typed Redis targets or callback implementations, but the `smoke` CLI itself is no longer a raw provider-URL runtime.
