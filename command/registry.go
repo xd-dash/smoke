@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"unicode"
 )
@@ -79,7 +80,11 @@ func installGoCommand(ctx context.Context, command Command) (string, error) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return "", fmt.Errorf("create Smoke bin directory: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, goBin, "install", command.GoPackage)
+	packageQuery := command.GoPackage
+	if !strings.Contains(packageQuery, "@") {
+		packageQuery += "@" + smokeBuildVersion()
+	}
+	cmd := exec.CommandContext(ctx, goBin, "install", packageQuery)
 	cmd.Env = append(os.Environ(), "GOBIN="+binDir)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -92,6 +97,16 @@ func installGoCommand(ctx context.Context, command Command) (string, error) {
 		return "", fmt.Errorf("installed command %q not found at %s: %w", command.Name, path, err)
 	}
 	return path, nil
+}
+
+func smokeBuildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		version := strings.TrimSpace(info.Main.Version)
+		if version != "" && version != "(devel)" {
+			return version
+		}
+	}
+	return "latest"
 }
 
 func commandEnvName(name string) string {
