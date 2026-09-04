@@ -12,17 +12,18 @@ import (
 
 // Target is the typed Redis connection boundary used by imported callers.
 type Target struct {
-	Network     string
-	Host        string
-	Port        int
-	Socket      string
-	TLS         bool
-	ServerName  string
-	Username    string
-	Password    string
-	DB          int
-	AuthProfile string
-	Source      string
+	Network      string
+	Host         string
+	Port         int
+	Socket       string
+	TLS          bool
+	ServerName   string
+	Username     string
+	Password     string
+	DB           int
+	AuthProvider string
+	AuthProfile  string
+	Source       string
 }
 
 // Subscription is intentionally ephemeral. No registration is persisted.
