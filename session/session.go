@@ -139,8 +139,10 @@ func SanitizeCallbacks(values []string) []string {
 			if dataset == "" {
 				dataset = strings.Trim(u.Path, "/")
 			}
-			domain := u.Query().Get("domain")
-			if domain != "" {
+			profile := strings.TrimSpace(u.Query().Get("profile"))
+			if profile != "" {
+				out = append(out, "axiom:"+dataset+"@"+profile)
+			} else if domain := strings.TrimSpace(u.Query().Get("domain")); domain != "" {
 				out = append(out, "axiom:"+dataset+"@"+domain)
 			} else {
 				out = append(out, "axiom:"+dataset)
