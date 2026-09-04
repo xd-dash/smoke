@@ -19,8 +19,9 @@ type cliArgs struct {
 	Profile      string
 	Channels     []string
 	Patterns     []string
-	Callbacks    []string
-	NoStdout     bool
+	Into         []intoSpec
+	Callbacks    []string // legacy URL form; --into is preferred
+	Detached     bool
 	Policy       callback.FailurePolicy
 	AuthProvider string
 }
@@ -49,10 +50,18 @@ func main() {
 		die("%v", err)
 	}
 
-	callbackValues := append([]string(nil), cfg.Callbacks...)
-	if !cfg.NoStdout {
+	intoValues, err := resolveInto(cfg.Into)
+	if err != nil {
+		die("into: %v", err)
+	}
+	callbackValues := append(intoValues, cfg.Callbacks...)
+	if !cfg.Detached {
 		callbackValues = append([]string{"stdout"}, callbackValues...)
 	}
+	if cfg.Detached && len(callbackValues) == 0 {
+		die("--detached requires at least one --into destination")
+	}
+
 	dispatcher, err := callback.Parse(callbackValues)
 	if err != nil {
 		die("callbacks: %v", err)
@@ -67,12 +76,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "logmash: callback failure provider=%s channel=%s: %v\n", message.Provider, message.Channel, err)
 	})
 
-	if !dispatcher.HasStdout() && os.Getenv("LOGMASH_DETACHED") != "1" {
+	// Detachment is explicit. Callback shape never implicitly daemonizes a
+	// subscription. Without --detached the process remains in the caller's
+	// terminal/session and dies with Ctrl+C or normal shell/session teardown.
+	if cfg.Detached && os.Getenv("LOGMASH_DETACHED") != "1" {
 		pid, logPath, err := detach(os.Args[1:])
 		if err != nil {
 			die("detach: %v", err)
 		}
-		fmt.Fprintf(os.Stderr, "logmash: started pid=%d log=%s; use `logmash list` for session id\n", pid, logPath)
+		fmt.Fprintf(os.Stderr, "logmash: started detached pid=%d log=%s; use `logmash list` for session id\n", pid, logPath)
 		return
 	}
 
@@ -124,7 +136,7 @@ func main() {
 		die("session registry: %v", err)
 	}
 	defer handle.Close()
-	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d\n", record.ID, record.PID)
+	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d detached=%t\n", record.ID, record.PID, cfg.Detached)
 
 	err = redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
 		Target:   target,
@@ -146,7 +158,7 @@ func listSessions() {
 		return
 	}
 	for _, record := range records {
-		fmt.Printf("%s pid=%d profile=%s target=%s\n", record.ID, record.PID, record.Profile, record.Target)
+		fmt.Printf("%s pid=%d profile=%s %s\n", record.ID, record.PID, record.Profile, record.Target)
 		if len(record.Channels) > 0 {
 			fmt.Printf("  channels: %s\n", strings.Join(record.Channels, ", "))
 		}
@@ -162,13 +174,9 @@ func listSessions() {
 
 func displayTarget(target redisprovider.Target) string {
 	if target.Network == "unix" {
-		return "unix:" + target.Socket
+		return "target=" + target.Socket + " network=unix"
 	}
-	scheme := "redis"
-	if target.TLS {
-		scheme = "rediss"
-	}
-	return scheme + "://" + net.JoinHostPort(target.Host, fmt.Sprintf("%d", target.Port))
+	return fmt.Sprintf("target=%s tls=%t", net.JoinHostPort(target.Host, fmt.Sprintf("%d", target.Port)), target.TLS)
 }
 
 func parseArgs(args []string) (cliArgs, error) {
@@ -181,7 +189,15 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cfg, fmt.Errorf("%s requires a value", args[i-1])
 			}
 			cfg.Patterns = append(cfg.Patterns, args[i])
+		case "--into":
+			if i+3 >= len(args) {
+				return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET")
+			}
+			cfg.Into = append(cfg.Into, intoSpec{Provider: args[i+1], Profile: args[i+2], Target: args[i+3]})
+			i += 3
 		case "--callback", "-c":
+			// Retained as a compatibility escape hatch. Managed destinations
+			// should use the human-readable --into grammar.
 			i++
 			if i >= len(args) {
 				return cfg, fmt.Errorf("%s requires a value", args[i-1])
@@ -199,8 +215,11 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cfg, fmt.Errorf("--auth-provider requires a value")
 			}
 			cfg.AuthProvider = args[i]
+		case "--detached":
+			cfg.Detached = true
 		case "--no-stdout", "-q":
-			cfg.NoStdout = true
+			// Compatibility alias for the old callback-only background mode.
+			cfg.Detached = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				return cfg, fmt.Errorf("unknown option %q", args[i])
@@ -213,13 +232,13 @@ func parseArgs(args []string) (cliArgs, error) {
 		}
 	}
 	if cfg.Profile == "" {
-		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--callback URL] [--auth-provider NAME] [--no-stdout]")
+		return cfg, fmt.Errorf("usage: logmash <profile|profile.logma.sh> [channel ...] [--pattern glob] [--detached] [--into PROVIDER PROFILE TARGET]")
 	}
 	if len(cfg.Channels) == 0 && len(cfg.Patterns) == 0 {
 		return cfg, fmt.Errorf("at least one channel or --pattern is required")
 	}
-	if cfg.NoStdout && len(cfg.Callbacks) == 0 {
-		return cfg, fmt.Errorf("--no-stdout requires at least one --callback")
+	if cfg.Detached && len(cfg.Into) == 0 && len(cfg.Callbacks) == 0 {
+		return cfg, fmt.Errorf("--detached requires at least one --into destination")
 	}
 	return cfg, nil
 }
