@@ -2,7 +2,12 @@
 
 `smoke` is a composable URL-provider runtime. URL schemes select providers; providers produce behavior; callbacks consume provider messages.
 
-The first provider is Redis Pub/Sub. Subscriptions are intentionally ephemeral: nothing is stored in Redis or in a smoke registry. Process lifetime is subscription lifetime.
+The first transport provider is Redis Pub/Sub. Subscriptions are intentionally ephemeral: nothing is stored in Redis or in a smoke registry. Process lifetime is subscription lifetime.
+
+Terminology in this repository and its Huram integration:
+
+- `Logma` means `xd-dash/logma`, including its durable Channel/Subscriber/Callback/Publisher graph and runtime reconciliation.
+- `Logmash` / `logma.sh` means the client implemented here in Smoke for direct receiving/routing without requiring the Logma HTTP control plane.
 
 ## CLI
 
@@ -54,7 +59,7 @@ Multiple direct and pattern subscriptions can share one Redis Pub/Sub connection
 smoke 'redis://127.0.0.1:6379?channel=events&channel=deployments&pattern=worker:*&callback=stdout'
 ```
 
-TLS and Unix sockets use the same provider:
+TLS and Unix sockets use the same transport provider:
 
 ```sh
 smoke 'rediss://user:password@redis.example.com:6380?channel=events&callback=stdout'
@@ -82,14 +87,63 @@ In particular, there is no `IsFatline` or `IsFarcaster` provider behavior:
 ```text
 west.logma.sh
     -> TXT/SRV
-    -> host + port + TLS + auth profile
+    -> host + port + TLS + auth-provider + auth-profile
     -> Redis Target
+    -> resolve credentials locally
     -> SUBSCRIBE / PSUBSCRIBE
 ```
 
 Farcaster host naming and Fatline service naming belong to deployment/DNS configuration, not to the Redis provider.
 
 Logmash is also deliberately lighter than durable Logma running inside Fatline. Logmash receives and routes messages directly over provider transport and does not require an HTTP control plane or create durable Channel/Subscriber/Publisher graph state.
+
+## Redis auth providers
+
+Redis transport and Redis authentication are separate composition boundaries. `provider/redis` owns Pub/Sub and connection options. `provider/redis/auth` owns how credentials are resolved.
+
+Built-in Logmash auth providers:
+
+```text
+none
+    no Redis AUTH
+    intended only for explicitly unauthenticated/local deployments
+
+password-env
+    password-only/default-user AUTH
+    LOGMASH_REDIS_<PROFILE>_PASSWORD
+    fallback: REDISCLI_AUTH
+
+acl-env
+    Redis ACL AUTH username password
+    LOGMASH_REDIS_<PROFILE>_USERNAME
+    LOGMASH_REDIS_<PROFILE>_PASSWORD
+
+auto-env
+    ACL username+password when both profile variables exist
+    otherwise profile password-only
+    otherwise REDISCLI_AUTH password-only
+    never silently falls back to no-auth
+```
+
+Example:
+
+```sh
+export LOGMASH_REDIS_WEST_USERNAME=observer
+export LOGMASH_REDIS_WEST_PASSWORD='...'
+logmash west events --auth-provider acl-env
+```
+
+The provider can also be selected non-secretly by the DNS TXT profile:
+
+```text
+west.logma.sh TXT "smoke=v1;provider=redis;auth-provider=acl-env;auth=west;tls=true"
+```
+
+`--auth-provider` overrides DNS metadata. If neither is specified, Logmash uses `auto-env`.
+
+The auth provider only supplies credentials. It does not grant capabilities. On Fatline-backed endpoints, Logmash should normally authenticate as a scope-materialized observation principal whose Redis ACL permits the exact subscribe-side channel families and required connection commands while denying publish, key mutation, scripting, ACL/CONFIG/MODULE/SHUTDOWN and unrelated channel families.
+
+The existing Huram `REDISCLI_AUTH` convention maps naturally to `password-env`; scoped Redis ACL principals map naturally to `acl-env`. Secrets never belong in `logma.sh` TXT/SRV records.
 
 ## Go composition
 
@@ -131,6 +185,19 @@ func main() {
 
 Typed Redis targets are the preferred in-process composition boundary when the caller has already resolved connection metadata. Raw URLs remain the portable CLI/interchange form.
 
+Auth providers are also ordinary imports:
+
+```go
+registry, err := redisauth.New(
+    redisauth.None{},
+    redisauth.PasswordEnv{},
+    redisauth.ACLEnv{},
+    redisauth.AutoEnv{},
+)
+creds, err := registry.Resolve(ctx, "acl-env", "west")
+target = creds.Apply(target)
+```
+
 `callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly:
 
 ```go
@@ -150,7 +217,7 @@ dispatcher, err := callback.Parse([]string{
 
 ## Provider contract
 
-A provider implements:
+A transport provider implements:
 
 ```go
 type Provider interface {
