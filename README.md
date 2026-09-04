@@ -2,7 +2,7 @@
 
 `smoke` is a composable URL-provider runtime. URL schemes select providers; providers produce behavior; callbacks consume provider messages.
 
-The first transport provider is Redis Pub/Sub. Subscriptions are intentionally ephemeral: nothing is stored in Redis or in a smoke registry. Process lifetime is subscription lifetime.
+The first transport provider is Redis Pub/Sub. Subscriptions are intentionally ephemeral: nothing is stored in Redis as durable Logma graph state. Process lifetime is subscription lifetime.
 
 Terminology in this repository and its Huram integration:
 
@@ -68,7 +68,7 @@ smoke 'redis+unix:///run/redis/redis.sock?channel=events&callback=stdout'
 
 ## Logmash
 
-`cmd/logmash` is the human-facing wrapper for DNS-resolved ephemeral receiving and routing:
+`cmd/logmash` is the human-facing wrapper for DNS-resolved receiving and routing:
 
 ```sh
 logmash west events
@@ -95,7 +95,97 @@ west.logma.sh
 
 Farcaster host naming and Fatline service naming belong to deployment/DNS configuration, not to the Redis provider.
 
-Logmash is also deliberately lighter than durable Logma running inside Fatline. Logmash receives and routes messages directly over provider transport and does not require an HTTP control plane or create durable Channel/Subscriber/Publisher graph state.
+Logmash is deliberately lighter than durable Logma running inside Fatline. It does not create durable Channel/Subscriber/Publisher graph resources, but it does supervise its own live client processes so running subscriptions can be inspected and explicitly stopped.
+
+## Logmash session supervision
+
+Each running Logmash subscription writes a small local process-bound session record containing its session ID, PID, profile, resolved endpoint summary, channels/patterns, auth provider, and sanitized callback descriptors. This is operational supervision, not durable Logma state.
+
+List active sessions:
+
+```sh
+logmash list
+```
+
+Example output:
+
+```text
+4c1d8eaa9321 pid=4127 profile=west.logma.sh target=rediss://fatline.west.farcaster.world:6380
+  channels: events, deployments
+  callbacks: stdout, axiom:events@us-east-1.aws.edge.axiom.co
+  auth: acl-env
+```
+
+Stop one exact subscription process and therefore all callbacks attached to it:
+
+```sh
+logmash stop 4c1d8eaa9321
+```
+
+Session records live under the user's cache directory and are removed when the process exits. `logmash list` removes stale records whose PID is no longer alive. Webhook userinfo/query strings are removed before callback descriptors are persisted.
+
+This gives Logmash a useful subset of Logma-like operational control without introducing Redis-backed durable resource graphs or an HTTP control plane.
+
+## Axiom callback provider
+
+Axiom is a first-class callback URL provider alongside `stdout` and HTTP(S) webhooks. The callback URL describes non-secret ingest configuration:
+
+```text
+axiom://<dataset-id>?domain=<edge-domain>
+```
+
+For example:
+
+```sh
+export AXIOM_TOKEN='...'
+
+logmash west events \
+  --callback 'axiom://redis-events?domain=us-east-1.aws.edge.axiom.co'
+```
+
+For EU Central 1:
+
+```sh
+logmash west events \
+  --callback 'axiom://redis-events?domain=eu-central-1.aws.edge.axiom.co'
+```
+
+The callback constructs:
+
+```text
+POST https://<edge-domain>/v1/ingest/<dataset-id>
+Authorization: Bearer <API token>
+Content-Type: application/json
+```
+
+The token defaults to environment variable `AXIOM_TOKEN`. A different environment variable can be selected without putting the secret in the URL:
+
+```sh
+logmash west events \
+  --callback 'axiom://redis-events?domain=us-east-1.aws.edge.axiom.co&token-env=WEST_AXIOM_TOKEN'
+```
+
+Optional Axiom ingest parameters are represented in the callback URL:
+
+```text
+timestamp-field=
+timestamp-format=
+event-labels=
+```
+
+Each Pub/Sub message is ingested as the normal Smoke callback envelope rather than assuming the Redis payload itself is JSON:
+
+```json
+{
+  "provider": "redis",
+  "source": "west.logma.sh",
+  "channel": "events",
+  "pattern": "",
+  "payload": "hello"
+}
+```
+
+This makes arbitrary Redis payloads queryable while preserving channel/source metadata. Callback failure follows the same dispatcher policy as webhooks: report and continue by default, or terminate the subscription with `--callback-policy fail-fast`.
 
 ## Redis auth providers
 
@@ -150,37 +240,7 @@ The existing Huram `REDISCLI_AUTH` convention maps naturally to `password-env`; 
 Providers are ordinary imports. Another program can build a registry with only the transports it wants:
 
 ```go
-package main
-
-import (
-    "context"
-    "log"
-
-    "github.com/xd-dash/smoke"
-    "github.com/xd-dash/smoke/callback"
-    redisprovider "github.com/xd-dash/smoke/provider/redis"
-)
-
-func main() {
-    registry, err := smoke.New(redisprovider.New())
-    if err != nil {
-        panic(err)
-    }
-
-    dispatcher := callback.New(callback.Stdout{})
-    dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
-        log.Printf("provider=%s channel=%s callback error: %v", message.Provider, message.Channel, err)
-    })
-
-    err = registry.Run(
-        context.Background(),
-        "redis://127.0.0.1:6379?channel=events",
-        dispatcher,
-    )
-    if err != nil {
-        panic(err)
-    }
-}
+registry, err := smoke.New(redisprovider.New())
 ```
 
 Typed Redis targets are the preferred in-process composition boundary when the caller has already resolved connection metadata. Raw URLs remain the portable CLI/interchange form.
@@ -198,22 +258,19 @@ creds, err := registry.Resolve(ctx, "acl-env", "west")
 target = creds.Apply(target)
 ```
 
-`callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly:
+Callbacks remain ordinary `callback.Callback` implementations, so Axiom can also be composed directly:
 
 ```go
-if err := dispatcher.SetFailurePolicy(callback.FailFast); err != nil {
-    panic(err)
-}
+dispatcher := callback.New(
+    callback.Stdout{},
+    callback.Axiom{
+        Dataset: "redis-events",
+        Domain:  "us-east-1.aws.edge.axiom.co",
+    },
+)
 ```
 
-Callback parsing is reusable:
-
-```go
-dispatcher, err := callback.Parse([]string{
-    "stdout",
-    "https://example.com/hook",
-})
-```
+`callback.New` defaults to `callback.Continue`. Embedded callers can opt into fail-fast explicitly.
 
 ## Provider contract
 
@@ -226,22 +283,6 @@ type Provider interface {
 }
 ```
 
-The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding stays in command packages, so importing a provider never unexpectedly daemonizes the caller.
+The package registry owns only URL-scheme dispatch. Provider-specific connection semantics stay inside provider packages. CLI-specific backgrounding and local supervision stay in command/session packages, so importing a provider never unexpectedly daemonizes or registers the caller.
 
 Callback failure policy also stays outside providers. That gives Redis, SSE, and future providers the same callback semantics without duplicating error-handling behavior in each transport.
-
-## Redis callback envelope
-
-Webhook callbacks receive JSON:
-
-```json
-{
-  "provider": "redis",
-  "source": "redis://redis.example.com:6379?channel=events",
-  "channel": "events",
-  "pattern": "",
-  "payload": "hello"
-}
-```
-
-Credentials and `callback=` destinations are removed from `source`. Stdout intentionally prints only the Redis payload, one message per line.
