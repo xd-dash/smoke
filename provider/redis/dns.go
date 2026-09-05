@@ -29,20 +29,8 @@ func (r DNSResolver) Resolve(ctx context.Context, name string) (Target, error) {
 		return Target{}, fmt.Errorf("redis TXT resolve %q: %w", name, err)
 	}
 
-	meta := map[string]string{}
-	for _, record := range txts {
-		if !strings.HasPrefix(record, "smoke=v1;") && record != "smoke=v1" {
-			continue
-		}
-		for _, field := range strings.Split(record, ";") {
-			k, v, ok := strings.Cut(field, "=")
-			if ok {
-				meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
-			}
-		}
-		break
-	}
-	if meta["smoke"] != "v1" || meta["provider"] != "redis" {
+	meta, ok := redisProfileMetadata(txts)
+	if !ok {
 		return Target{}, fmt.Errorf("no smoke redis profile for %q", name)
 	}
 
@@ -73,4 +61,23 @@ func (r DNSResolver) Resolve(ctx context.Context, name string) (Target, error) {
 		AuthProfile:  meta["auth"],
 		Source:       name,
 	}, nil
+}
+
+func redisProfileMetadata(txts []string) (map[string]string, bool) {
+	for _, record := range txts {
+		if !strings.HasPrefix(record, "smoke=v1;") && record != "smoke=v1" {
+			continue
+		}
+		meta := map[string]string{}
+		for _, field := range strings.Split(record, ";") {
+			k, v, ok := strings.Cut(field, "=")
+			if ok {
+				meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+		}
+		if meta["smoke"] == "v1" && meta["provider"] == "redis" {
+			return meta, true
+		}
+	}
+	return nil, false
 }
