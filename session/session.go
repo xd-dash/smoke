@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Record is lightweight local supervision metadata for one running Logmash
-// process. It is not durable Logma graph state.
+// Record is lightweight local supervision metadata for one running unattended
+// Logmash process. It is not durable Logma graph state.
 type Record struct {
 	ID           string    `json:"id"`
 	PID          int       `json:"pid"`
@@ -98,49 +98,35 @@ func List() ([]Record, error) {
 }
 
 func Stop(id string) (Record, error) {
-	record, path, err := runningRecord(id)
+	record, err := runningRecord(id)
 	if err != nil {
 		return Record{}, err
 	}
 	if err := stopProcess(record.PID); err != nil {
 		return Record{}, fmt.Errorf("stop session %s: %w", id, err)
 	}
-	_ = path
 	return record, nil
 }
 
-// Detach removes only the running process's inherited stdout callback. The
-// Logmash runtime and all remaining callbacks continue running.
-func Detach(id string) (Record, error) {
-	record, _, err := runningRecord(id)
-	if err != nil {
-		return Record{}, err
-	}
-	if err := detachOutputProcess(record.PID); err != nil {
-		return Record{}, fmt.Errorf("detach session %s output: %w", id, err)
-	}
-	return record, nil
-}
-
-func runningRecord(id string) (Record, string, error) {
+func runningRecord(id string) (Record, error) {
 	id = strings.TrimSpace(id)
 	if id == "" || strings.ContainsAny(id, `/\\`) {
-		return Record{}, "", fmt.Errorf("invalid session id")
+		return Record{}, fmt.Errorf("invalid session id")
 	}
 	dir, err := directory()
 	if err != nil {
-		return Record{}, "", err
+		return Record{}, err
 	}
 	path := filepath.Join(dir, id+".json")
 	record, err := read(path)
 	if err != nil {
-		return Record{}, "", err
+		return Record{}, err
 	}
 	if !processAlive(record.PID) {
 		_ = os.Remove(path)
-		return Record{}, "", fmt.Errorf("session %s is not running", id)
+		return Record{}, fmt.Errorf("session %s is not running", id)
 	}
-	return record, path, nil
+	return record, nil
 }
 
 func SanitizeCallbacks(values []string) []string {
