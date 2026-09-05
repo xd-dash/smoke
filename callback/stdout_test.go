@@ -10,13 +10,13 @@ func TestStdoutPreservesSourceRelationship(t *testing.T) {
 	var out bytes.Buffer
 	cb := Stdout{Writer: &out}
 	if err := cb.Handle(context.Background(), Message{
-		Source:  "west.logma.sh",
+		Source:  "us:west",
 		Channel: "events",
 		Payload: "hello",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := out.String(), "west:events\thello\n"; got != want {
+	if got, want := out.String(), "us:west:events\thello\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
