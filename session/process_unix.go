@@ -9,24 +9,12 @@ import (
 
 func processAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
+	if err != nil { return false }
 	return process.Signal(syscall.Signal(0)) == nil
 }
 
 func stopProcess(pid int) error {
 	process, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	return process.Signal(syscall.SIGTERM)
-}
-
-func detachOutputProcess(pid int) error {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	return process.Signal(syscall.SIGUSR1)
 }
