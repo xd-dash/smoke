@@ -38,7 +38,8 @@ type cliArgs struct {
 	Sources      []sourceSelector
 	Into         []intoSpec
 	Callbacks    []string
-	Detached     bool
+	Foreground   bool
+	Stdout       bool
 	Policy       callback.FailurePolicy
 	AuthProvider string
 }
@@ -47,12 +48,25 @@ func init() {
 	command.Register("logmash", Run)
 }
 
-// Run is Logmash's in-process Smoke command entry point.
+// Run is Logmash's in-process Smoke command entry point. Normal user launches
+// immediately start the same Smoke executable as a detached Logmash runtime;
+// LOGMASH_DETACHED marks that child so it executes the runtime instead of
+// recursively launching another copy.
 func Run(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "list", "ls":
 			listSessions()
+			return nil
+		case "detach":
+			if len(args) != 2 {
+				return fmt.Errorf("usage: logmash detach <session-id>")
+			}
+			record, err := session.Detach(args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("detached stdout from %s pid=%d; runtime continues\n", record.ID, record.PID)
 			return nil
 		case "stop", "end":
 			if len(args) != 2 {
@@ -72,16 +86,24 @@ func Run(args []string) error {
 		return err
 	}
 
+	// Background process lifetime and stdout lifetime are intentionally
+	// independent. The launcher exits, while the child inherits stdout/stderr.
+	if !cfg.Foreground && os.Getenv("LOGMASH_DETACHED") != "1" {
+		pid, err := detach(args)
+		if err != nil {
+			return fmt.Errorf("detach: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "logmash: started pid=%d; use `smoke logmash list`, `detach <id>`, or `stop <id>`\n", pid)
+		return nil
+	}
+
 	intoValues, err := resolveInto(cfg.Into)
 	if err != nil {
 		return fmt.Errorf("into: %w", err)
 	}
 	callbackValues := append(intoValues, cfg.Callbacks...)
-	if !cfg.Detached {
+	if cfg.Stdout {
 		callbackValues = append([]string{"stdout"}, callbackValues...)
-	}
-	if cfg.Detached && len(callbackValues) == 0 {
-		return fmt.Errorf("--detached requires at least one --into destination")
 	}
 
 	dispatcher, err := callback.Parse(callbackValues)
@@ -98,17 +120,22 @@ func Run(args []string) error {
 		fmt.Fprintf(os.Stderr, "logmash: callback failure source=%s provider=%s channel=%s: %v\n", message.Source, message.Provider, message.Channel, err)
 	})
 
-	if cfg.Detached && os.Getenv("LOGMASH_DETACHED") != "1" {
-		pid, logPath, err := detach(args)
-		if err != nil {
-			return fmt.Errorf("detach: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "logmash: started detached pid=%d log=%s; use `smoke logmash list` for session id\n", pid, logPath)
-		return nil
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	detachSignal, stopDetachSignal := stdoutDetachSignal()
+	defer stopDetachSignal()
+	if detachSignal != nil && dispatcher.HasStdout() {
+		go func() {
+			select {
+			case <-detachSignal:
+				if dispatcher.Remove("stdout") {
+					fmt.Fprintln(os.Stderr, "logmash: stdout detached; remaining callbacks continue")
+				}
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	subscriptions, err := resolveSources(ctx, cfg)
 	if err != nil {
@@ -128,7 +155,7 @@ func Run(args []string) error {
 		return fmt.Errorf("session registry: %w", err)
 	}
 	defer handle.Close()
-	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d sources=%d detached=%t\n", record.ID, record.PID, len(subscriptions), cfg.Detached)
+	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d sources=%d background=%t\n", record.ID, record.PID, len(subscriptions), os.Getenv("LOGMASH_DETACHED") == "1")
 
 	if err := runSources(ctx, subscriptions, dispatcher); err != nil && ctx.Err() == nil {
 		return err
@@ -299,7 +326,7 @@ func displayTarget(target redisprovider.Target) string {
 }
 
 func parseArgs(args []string) (cliArgs, error) {
-	cfg := cliArgs{Policy: callback.Continue}
+	cfg := cliArgs{Policy: callback.Continue, Stdout: true}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--pattern", "-p":
@@ -308,38 +335,54 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cfg, fmt.Errorf("%s requires COUNTRY:REGION:PATTERN", args[i-1])
 			}
 			selector, err := parseSourceSelector(args[i], true)
-			if err != nil { return cfg, err }
+			if err != nil {
+				return cfg, err
+			}
 			cfg.Sources = append(cfg.Sources, selector)
 		case "--into":
-			if i+3 >= len(args) { return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET") }
+			if i+3 >= len(args) {
+				return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET")
+			}
 			cfg.Into = append(cfg.Into, intoSpec{Provider: args[i+1], Profile: args[i+2], Target: args[i+3]})
 			i += 3
 		case "--callback", "-c":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("%s requires a value", args[i-1])
+			}
 			cfg.Callbacks = append(cfg.Callbacks, args[i])
 		case "--callback-policy":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("--callback-policy requires a value") }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("--callback-policy requires a value")
+			}
 			cfg.Policy = callback.FailurePolicy(args[i])
 		case "--auth-provider":
 			i++
-			if i >= len(args) { return cfg, fmt.Errorf("--auth-provider requires a value") }
+			if i >= len(args) {
+				return cfg, fmt.Errorf("--auth-provider requires a value")
+			}
 			cfg.AuthProvider = args[i]
-		case "--detached", "--no-stdout", "-q":
-			cfg.Detached = true
+		case "--foreground":
+			cfg.Foreground = true
+		case "--detached":
+			// Compatibility spelling. Background launch is now the default.
+			cfg.Foreground = false
+		case "--no-stdout", "-q":
+			cfg.Stdout = false
 		default:
-			if strings.HasPrefix(args[i], "-") { return cfg, fmt.Errorf("unknown option %q", args[i]) }
+			if strings.HasPrefix(args[i], "-") {
+				return cfg, fmt.Errorf("unknown option %q", args[i])
+			}
 			selector, err := parseSourceSelector(args[i], false)
-			if err != nil { return cfg, err }
+			if err != nil {
+				return cfg, err
+			}
 			cfg.Sources = append(cfg.Sources, selector)
 		}
 	}
 	if len(cfg.Sources) == 0 {
-		return cfg, fmt.Errorf("usage: logmash COUNTRY:REGION:CHANNEL [COUNTRY:REGION:CHANNEL ...] [--pattern COUNTRY:REGION:GLOB] [--detached] [--into PROVIDER PROFILE TARGET]")
-	}
-	if cfg.Detached && len(cfg.Into) == 0 && len(cfg.Callbacks) == 0 {
-		return cfg, fmt.Errorf("--detached requires at least one --into destination")
+		return cfg, fmt.Errorf("usage: logmash COUNTRY:REGION:CHANNEL [COUNTRY:REGION:CHANNEL ...] [--pattern COUNTRY:REGION:GLOB] [--foreground] [--no-stdout] [--into PROVIDER PROFILE TARGET]")
 	}
 	return cfg, nil
 }
@@ -347,17 +390,23 @@ func parseArgs(args []string) (cliArgs, error) {
 func parseSourceSelector(value string, pattern bool) (sourceSelector, error) {
 	value = strings.TrimSpace(value)
 	parts := strings.SplitN(value, ":", 3)
-	if len(parts) != 3 { return invalidSourceSelector(value, pattern) }
+	if len(parts) != 3 {
+		return invalidSourceSelector(value, pattern)
+	}
 	country := strings.ToLower(strings.TrimSpace(parts[0]))
 	region := strings.ToLower(strings.TrimSpace(parts[1]))
 	item := strings.TrimSpace(parts[2])
-	if country == "" || region == "" || item == "" || len(country) != 2 { return invalidSourceSelector(value, pattern) }
+	if country == "" || region == "" || item == "" || len(country) != 2 {
+		return invalidSourceSelector(value, pattern)
+	}
 	return sourceSelector{Country: country, Region: region, Value: item, Pattern: pattern}, nil
 }
 
 func invalidSourceSelector(value string, pattern bool) (sourceSelector, error) {
 	kind := "CHANNEL"
-	if pattern { kind = "PATTERN" }
+	if pattern {
+		kind = "PATTERN"
+	}
 	return sourceSelector{}, fmt.Errorf("%q must be COUNTRY:REGION:%s with a two-letter country code", value, kind)
 }
 
