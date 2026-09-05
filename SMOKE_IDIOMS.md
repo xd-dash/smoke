@@ -38,6 +38,46 @@ local composition
 
 Core packages must not import every optional provider merely to make them discoverable. The composition root is the authority for what is linked.
 
+## Smoke environment/workspace invariants
+
+A Smoke environment is a named Go workspace. It is first-class Smoke tooling, not a runtime provider.
+
+The canonical Go-side representation is:
+
+```text
+<env>/
+├── go.work
+└── tools/
+    ├── go.mod
+    └── go.sum
+```
+
+Rules:
+
+- `go.work` is the environment/workspace manifest.
+- `tools/go.mod` exists to carry environment-scoped Go `tool` directives and their ordinary module requirements.
+- Do not mirror Go tool dependencies into a Smoke JSON/YAML dependency graph.
+- Use normal Go commands to mutate workspace/tool state so Go remains authoritative for version selection, sums, replacements, exclusions, and tool resolution.
+- Environment activation is scoped with `GOWORK` plus `SMOKE_ENV`; do not require mutation of the caller's parent shell.
+- `smoke env shell` creates a child shell; `smoke env exec` creates a child process; `smoke env run` activates the environment and dispatches another compiled-in Smoke command in-process.
+- `smoke env build` is a thin `go build` invocation under the selected workspace. Smoke must not invent a second build graph over `go.work`.
+- Workspace `use` targets are local Go module directories containing `go.mod`.
+- The environment tools module is always part of the workspace so its declared tools are visible to `go tool` in workspace mode.
+
+Composition and environment are separate axes:
+
+```text
+smoke compose
+    = which optional packages are linked into the Smoke binary
+
+smoke env
+    = which local modules/tools are active while that binary is used
+```
+
+An environment cannot make an optional Smoke command available unless that command is already present in the current binary's import-time composition.
+
+Logmash follows the same rule. `smoke env run <env> -- logmash ...` must dispatch the already-compiled Logmash handler through the normal command registry. It must not resolve, install, or launch a separate Logmash executable. Unattended Logmash children re-exec the same Smoke executable and inherit `GOWORK`/`SMOKE_ENV` from the parent process.
+
 ## Logmash source grammar
 
 A source selector is always:
@@ -228,9 +268,9 @@ When modifying Smoke/Logmash:
 4. Keep stdout default and attached unless the caller explicitly removes stdout.
 5. Keep unattended supervision limited to start/list/stop.
 6. Keep DNS discovery free of credentials and runtime dataset/channel state.
-7. Add focused tests for parser, lifecycle, resolver, provider, or rebuild invariants touched by the change.
+7. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, or rebuild invariants touched by the change.
 8. Run `go test ./...` on the exact final `main` head.
-9. Update `README.md` for user-visible behavior changes.
+9. Update `README.md` or focused docs for user-visible behavior changes.
 10. Update this idiom file when an architectural invariant changes, not for incidental implementation details.
 
-Before adding a new daemon, IPC channel, output persistence layer, runtime plugin mechanism, or control-plane state, first verify that the requirement cannot be expressed through the existing Go composition, attached/unattended lifetime, typed provider boundary, callback fan-out, or session start/list/stop primitives.
+Before adding a new daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod` workspace machinery, attached/unattended lifetime, typed provider boundary, callback fan-out, or session start/list/stop primitives.
