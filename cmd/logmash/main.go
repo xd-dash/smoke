@@ -1,4 +1,4 @@
-package main
+package logmash
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/xd-dash/smoke/callback"
+	"github.com/xd-dash/smoke/command"
 	redisprovider "github.com/xd-dash/smoke/provider/redis"
 	redisauth "github.com/xd-dash/smoke/provider/redis/auth"
 	"github.com/xd-dash/smoke/session"
@@ -36,69 +37,74 @@ type sourceSubscription struct {
 type cliArgs struct {
 	Sources      []sourceSelector
 	Into         []intoSpec
-	Callbacks    []string // legacy URL form; --into is preferred
+	Callbacks    []string
 	Detached     bool
 	Policy       callback.FailurePolicy
 	AuthProvider string
 }
 
-func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+func init() {
+	command.Register("logmash", Run)
+}
+
+// Run is Logmash's in-process Smoke command entry point.
+func Run(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
 		case "list", "ls":
 			listSessions()
-			return
+			return nil
 		case "stop", "end":
-			if len(os.Args) != 3 {
-				die("usage: logmash stop <session-id>")
+			if len(args) != 2 {
+				return fmt.Errorf("usage: logmash stop <session-id>")
 			}
-			record, err := session.Stop(os.Args[2])
+			record, err := session.Stop(args[1])
 			if err != nil {
-				die("%v", err)
+				return err
 			}
 			fmt.Printf("stopping %s pid=%d profile=%s\n", record.ID, record.PID, record.Profile)
-			return
+			return nil
 		}
 	}
 
-	cfg, err := parseArgs(os.Args[1:])
+	cfg, err := parseArgs(args)
 	if err != nil {
-		die("%v", err)
+		return err
 	}
 
 	intoValues, err := resolveInto(cfg.Into)
 	if err != nil {
-		die("into: %v", err)
+		return fmt.Errorf("into: %w", err)
 	}
 	callbackValues := append(intoValues, cfg.Callbacks...)
 	if !cfg.Detached {
 		callbackValues = append([]string{"stdout"}, callbackValues...)
 	}
 	if cfg.Detached && len(callbackValues) == 0 {
-		die("--detached requires at least one --into destination")
+		return fmt.Errorf("--detached requires at least one --into destination")
 	}
 
 	dispatcher, err := callback.Parse(callbackValues)
 	if err != nil {
-		die("callbacks: %v", err)
+		return fmt.Errorf("callbacks: %w", err)
 	}
 	if dispatcher.Empty() {
-		die("at least one callback is required")
+		return fmt.Errorf("at least one callback is required")
 	}
 	if err := dispatcher.SetFailurePolicy(cfg.Policy); err != nil {
-		die("callback policy: %v", err)
+		return fmt.Errorf("callback policy: %w", err)
 	}
 	dispatcher.SetErrorHandler(func(_ context.Context, message callback.Message, err error) {
 		fmt.Fprintf(os.Stderr, "logmash: callback failure source=%s provider=%s channel=%s: %v\n", message.Source, message.Provider, message.Channel, err)
 	})
 
 	if cfg.Detached && os.Getenv("LOGMASH_DETACHED") != "1" {
-		pid, logPath, err := detach(os.Args[1:])
+		pid, logPath, err := detach(args)
 		if err != nil {
-			die("detach: %v", err)
+			return fmt.Errorf("detach: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "logmash: started detached pid=%d log=%s; use `logmash list` for session id\n", pid, logPath)
-		return
+		fmt.Fprintf(os.Stderr, "logmash: started detached pid=%d log=%s; use `smoke logmash list` for session id\n", pid, logPath)
+		return nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -106,7 +112,7 @@ func main() {
 
 	subscriptions, err := resolveSources(ctx, cfg)
 	if err != nil {
-		die("sources: %v", err)
+		return fmt.Errorf("sources: %w", err)
 	}
 
 	qualifiedChannels, qualifiedPatterns, profiles := sessionSelectors(subscriptions)
@@ -119,14 +125,15 @@ func main() {
 		AuthProvider: sessionAuthProvider(subscriptions),
 	})
 	if err != nil {
-		die("session registry: %v", err)
+		return fmt.Errorf("session registry: %w", err)
 	}
 	defer handle.Close()
 	fmt.Fprintf(os.Stderr, "logmash: session=%s pid=%d sources=%d detached=%t\n", record.ID, record.PID, len(subscriptions), cfg.Detached)
 
 	if err := runSources(ctx, subscriptions, dispatcher); err != nil && ctx.Err() == nil {
-		die("%v", err)
+		return err
 	}
+	return nil
 }
 
 func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, error) {
@@ -141,12 +148,7 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 		source := logicalSource(selector.Country, selector.Region)
 		group := groups[source]
 		if group == nil {
-			group = &grouped{
-				country: selector.Country,
-				region: selector.Region,
-				channels: map[string]struct{}{},
-				patterns: map[string]struct{}{},
-			}
+			group = &grouped{country: selector.Country, region: selector.Region, channels: map[string]struct{}{}, patterns: map[string]struct{}{}}
 			groups[source] = group
 		}
 		if selector.Pattern {
@@ -162,12 +164,7 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 	}
 	sort.Strings(sources)
 
-	authRegistry, err := redisauth.New(
-		redisauth.None{},
-		redisauth.PasswordEnv{},
-		redisauth.ACLEnv{},
-		redisauth.AutoEnv{},
-	)
+	authRegistry, err := redisauth.New(redisauth.None{}, redisauth.PasswordEnv{}, redisauth.ACLEnv{}, redisauth.AutoEnv{})
 	if err != nil {
 		return nil, fmt.Errorf("auth registry: %w", err)
 	}
@@ -196,17 +193,8 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 			return nil, fmt.Errorf("%s auth provider %s: %w", source, authProvider, err)
 		}
 		target = credentials.Apply(target)
-		// Preserve the human/logical source relationship in callback envelopes.
-		// DNS profile and physical Redis endpoint remain independently movable.
 		target.Source = source
-		out = append(out, sourceSubscription{
-			Source:       source,
-			Profile:      profile,
-			Channels:     sortedKeys(group.channels),
-			Patterns:     sortedKeys(group.patterns),
-			Target:       target,
-			AuthProvider: authProvider,
-		})
+		out = append(out, sourceSubscription{Source: source, Profile: profile, Channels: sortedKeys(group.channels), Patterns: sortedKeys(group.patterns), Target: target, AuthProvider: authProvider})
 	}
 	return out, nil
 }
@@ -214,7 +202,6 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 func runSources(parent context.Context, subscriptions []sourceSubscription, dispatcher *callback.Dispatcher) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-
 	errCh := make(chan error, len(subscriptions))
 	var wg sync.WaitGroup
 	for _, source := range subscriptions {
@@ -222,24 +209,15 @@ func runSources(parent context.Context, subscriptions []sourceSubscription, disp
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{
-				Target:   source.Target,
-				Channels: source.Channels,
-				Patterns: source.Patterns,
-			}, dispatcher)
+			err := redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{Target: source.Target, Channels: source.Channels, Patterns: source.Patterns}, dispatcher)
 			if err != nil && ctx.Err() == nil {
 				errCh <- fmt.Errorf("source %s: %w", source.Source, err)
 				cancel()
 			}
 		}()
 	}
-
 	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
+	go func() { wg.Wait(); close(done) }()
 	select {
 	case err := <-errCh:
 		<-done
@@ -276,8 +254,7 @@ func sessionAuthProvider(subscriptions []sourceSubscription) string {
 	for _, source := range subscriptions {
 		providers[source.AuthProvider] = struct{}{}
 	}
-	values := sortedKeys(providers)
-	return strings.Join(values, ",")
+	return strings.Join(sortedKeys(providers), ",")
 }
 
 func sortedKeys(values map[string]struct{}) []string {
@@ -292,7 +269,8 @@ func sortedKeys(values map[string]struct{}) []string {
 func listSessions() {
 	records, err := session.List()
 	if err != nil {
-		die("list sessions: %v", err)
+		fmt.Fprintf(os.Stderr, "logmash: list sessions: %v\n", err)
+		return
 	}
 	if len(records) == 0 {
 		fmt.Println("no active logmash sessions")
@@ -330,46 +308,30 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cfg, fmt.Errorf("%s requires COUNTRY:REGION:PATTERN", args[i-1])
 			}
 			selector, err := parseSourceSelector(args[i], true)
-			if err != nil {
-				return cfg, err
-			}
+			if err != nil { return cfg, err }
 			cfg.Sources = append(cfg.Sources, selector)
 		case "--into":
-			if i+3 >= len(args) {
-				return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET")
-			}
+			if i+3 >= len(args) { return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET") }
 			cfg.Into = append(cfg.Into, intoSpec{Provider: args[i+1], Profile: args[i+2], Target: args[i+3]})
 			i += 3
 		case "--callback", "-c":
 			i++
-			if i >= len(args) {
-				return cfg, fmt.Errorf("%s requires a value", args[i-1])
-			}
+			if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }
 			cfg.Callbacks = append(cfg.Callbacks, args[i])
 		case "--callback-policy":
 			i++
-			if i >= len(args) {
-				return cfg, fmt.Errorf("--callback-policy requires a value")
-			}
+			if i >= len(args) { return cfg, fmt.Errorf("--callback-policy requires a value") }
 			cfg.Policy = callback.FailurePolicy(args[i])
 		case "--auth-provider":
 			i++
-			if i >= len(args) {
-				return cfg, fmt.Errorf("--auth-provider requires a value")
-			}
+			if i >= len(args) { return cfg, fmt.Errorf("--auth-provider requires a value") }
 			cfg.AuthProvider = args[i]
-		case "--detached":
-			cfg.Detached = true
-		case "--no-stdout", "-q":
+		case "--detached", "--no-stdout", "-q":
 			cfg.Detached = true
 		default:
-			if strings.HasPrefix(args[i], "-") {
-				return cfg, fmt.Errorf("unknown option %q", args[i])
-			}
+			if strings.HasPrefix(args[i], "-") { return cfg, fmt.Errorf("unknown option %q", args[i]) }
 			selector, err := parseSourceSelector(args[i], false)
-			if err != nil {
-				return cfg, err
-			}
+			if err != nil { return cfg, err }
 			cfg.Sources = append(cfg.Sources, selector)
 		}
 	}
@@ -385,23 +347,17 @@ func parseArgs(args []string) (cliArgs, error) {
 func parseSourceSelector(value string, pattern bool) (sourceSelector, error) {
 	value = strings.TrimSpace(value)
 	parts := strings.SplitN(value, ":", 3)
-	if len(parts) != 3 {
-		return invalidSourceSelector(value, pattern)
-	}
+	if len(parts) != 3 { return invalidSourceSelector(value, pattern) }
 	country := strings.ToLower(strings.TrimSpace(parts[0]))
 	region := strings.ToLower(strings.TrimSpace(parts[1]))
 	item := strings.TrimSpace(parts[2])
-	if country == "" || region == "" || item == "" || len(country) != 2 {
-		return invalidSourceSelector(value, pattern)
-	}
+	if country == "" || region == "" || item == "" || len(country) != 2 { return invalidSourceSelector(value, pattern) }
 	return sourceSelector{Country: country, Region: region, Value: item, Pattern: pattern}, nil
 }
 
 func invalidSourceSelector(value string, pattern bool) (sourceSelector, error) {
 	kind := "CHANNEL"
-	if pattern {
-		kind = "PATTERN"
-	}
+	if pattern { kind = "PATTERN" }
 	return sourceSelector{}, fmt.Errorf("%q must be COUNTRY:REGION:%s with a two-letter country code", value, kind)
 }
 
@@ -410,12 +366,5 @@ func logicalSource(country, region string) string {
 }
 
 func sourceProfile(country, region string) string {
-	// DNS hierarchy is reversed relative to the human grammar: the broader
-	// country scope is the parent of the region label.
 	return strings.ToLower(strings.TrimSpace(region)) + "." + strings.ToLower(strings.TrimSpace(country)) + ".logma.sh"
-}
-
-func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "logmash: "+format+"\n", args...)
-	os.Exit(1)
 }
