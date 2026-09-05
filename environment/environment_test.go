@@ -34,6 +34,44 @@ func TestCreateProducesWorkspaceAndToolsModule(t *testing.T) {
 	}
 }
 
+func TestUseAndDropUseDelegateToGoWorkspace(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SMOKE_ENV_DIR", root)
+	env, err := Create(context.Background(), "infra")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/project\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Use(context.Background(), "infra", project); err != nil {
+		t.Fatal(err)
+	}
+	work, err := os.ReadFile(env.WorkFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(work), project) {
+		t.Fatalf("go.work does not contain project %q: %s", project, work)
+	}
+
+	if err := DropUse(context.Background(), "infra", project); err != nil {
+		t.Fatal(err)
+	}
+	work, err = os.ReadFile(env.WorkFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(work), project) {
+		t.Fatalf("go.work still contains dropped project %q: %s", project, work)
+	}
+}
+
 func TestListIsSortedAndOnlyIncludesWorkspaces(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SMOKE_ENV_DIR", root)
