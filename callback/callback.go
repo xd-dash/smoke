@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Message is the provider-neutral callback envelope.
@@ -35,33 +36,84 @@ const (
 // Continue mode. It may log, count, or otherwise record the failure.
 type ErrorHandler func(context.Context, Message, error)
 
-// Dispatcher fans each message out to all callbacks. Every configured callback
-// gets a chance to run. By default, callback failures are reported and the
-// provider session continues; FailFast promotes the joined failure to the
-// provider.
+type callbackSet struct {
+	callbacks []Callback
+	stdout    bool
+}
+
+// Dispatcher fans each message out to an immutable snapshot of the current
+// callback set. Callback membership is replaced atomically, so lifecycle
+// operations such as detaching stdout do not require a registry lock and do
+// not race an in-flight dispatch.
 type Dispatcher struct {
-	callbacks   []Callback
-	stdout      bool
-	policy      FailurePolicy
+	callbacks    atomic.Pointer[callbackSet]
+	policy       FailurePolicy
 	errorHandler ErrorHandler
 }
 
 func New(callbacks ...Callback) *Dispatcher {
-	d := &Dispatcher{
-		callbacks: append([]Callback(nil), callbacks...),
-		policy:    Continue,
-	}
-	for _, cb := range callbacks {
-		if cb.Name() == "stdout" {
-			d.stdout = true
-		}
-	}
+	d := &Dispatcher{policy: Continue}
+	d.callbacks.Store(newCallbackSet(callbacks))
 	return d
 }
 
-func (d *Dispatcher) HasStdout() bool { return d != nil && d.stdout }
+func newCallbackSet(callbacks []Callback) *callbackSet {
+	set := &callbackSet{callbacks: append([]Callback(nil), callbacks...)}
+	for _, cb := range set.callbacks {
+		if cb.Name() == "stdout" {
+			set.stdout = true
+		}
+	}
+	return set
+}
 
-func (d *Dispatcher) Empty() bool { return d == nil || len(d.callbacks) == 0 }
+func (d *Dispatcher) snapshot() *callbackSet {
+	if d == nil {
+		return nil
+	}
+	return d.callbacks.Load()
+}
+
+func (d *Dispatcher) HasStdout() bool {
+	set := d.snapshot()
+	return set != nil && set.stdout
+}
+
+func (d *Dispatcher) Empty() bool {
+	set := d.snapshot()
+	return set == nil || len(set.callbacks) == 0
+}
+
+// Remove removes every callback with the given name. An in-flight Dispatch may
+// finish using the snapshot it already acquired; subsequent dispatches observe
+// the replacement immediately.
+func (d *Dispatcher) Remove(name string) bool {
+	if d == nil || name == "" {
+		return false
+	}
+	for {
+		current := d.callbacks.Load()
+		if current == nil || len(current.callbacks) == 0 {
+			return false
+		}
+		kept := make([]Callback, 0, len(current.callbacks))
+		removed := false
+		for _, cb := range current.callbacks {
+			if cb.Name() == name {
+				removed = true
+				continue
+			}
+			kept = append(kept, cb)
+		}
+		if !removed {
+			return false
+		}
+		next := newCallbackSet(kept)
+		if d.callbacks.CompareAndSwap(current, next) {
+			return true
+		}
+	}
+}
 
 func (d *Dispatcher) FailurePolicy() FailurePolicy {
 	if d == nil || d.policy == "" {
@@ -89,21 +141,27 @@ func (d *Dispatcher) SetErrorHandler(handler ErrorHandler) {
 	}
 }
 
+type callbackError struct {
+	name string
+	err  error
+}
+
 func (d *Dispatcher) Dispatch(ctx context.Context, message Message) error {
-	if d == nil || len(d.callbacks) == 0 {
+	set := d.snapshot()
+	if set == nil || len(set.callbacks) == 0 {
 		return nil
 	}
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, len(d.callbacks))
+	errCh := make(chan callbackError, len(set.callbacks))
 
-	for _, cb := range d.callbacks {
+	for _, cb := range set.callbacks {
 		cb := cb
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := cb.Handle(ctx, message); err != nil {
-				errCh <- fmt.Errorf("%s callback: %w", cb.Name(), err)
+				errCh <- callbackError{name: cb.Name(), err: fmt.Errorf("%s callback: %w", cb.Name(), err)}
 			}
 		}()
 	}
@@ -112,8 +170,14 @@ func (d *Dispatcher) Dispatch(ctx context.Context, message Message) error {
 	close(errCh)
 
 	var errs []error
-	for err := range errCh {
-		errs = append(errs, err)
+	for callbackErr := range errCh {
+		errs = append(errs, callbackErr.err)
+		// Stdout is observational rather than authoritative. If its inherited
+		// descriptor disappears, detach it and keep the remaining callbacks
+		// supervised by Logmash.
+		if d.FailurePolicy() == Continue && callbackErr.name == "stdout" {
+			d.Remove("stdout")
+		}
 	}
 	joined := errors.Join(errs...)
 	if joined == nil {
