@@ -1,4 +1,4 @@
-package main
+package logmash
 
 import (
 	"reflect"
@@ -59,7 +59,6 @@ func TestParseSourceSelector(t *testing.T) {
 	if got.Country != "us" || got.Region != "west" || got.Value != "events" || got.Pattern {
 		t.Fatalf("selector = %#v", got)
 	}
-
 	pattern, err := parseSourceSelector("us:east:worker:*", true)
 	if err != nil {
 		t.Fatal(err)
@@ -87,19 +86,11 @@ func TestSourceProfileHierarchy(t *testing.T) {
 }
 
 func TestResolveIntoAxiomAliases(t *testing.T) {
-	got, err := resolveInto([]intoSpec{
-		{Provider: "axiom", Profile: "east", Target: "one"},
-		{Provider: "axiom", Profile: "eu", Target: "two"},
-		{Provider: "axiom", Profile: "default", Target: "three"},
-	})
+	got, err := resolveInto([]intoSpec{{Provider: "axiom", Profile: "east", Target: "one"}, {Provider: "axiom", Profile: "eu", Target: "two"}, {Provider: "axiom", Profile: "default", Target: "three"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"axiom://one?profile=axiom-us-east-1.logma.sh",
-		"axiom://two?profile=axiom-eu-central-1.logma.sh",
-		"axiom://three?profile=axiom.logma.sh",
-	}
+	want := []string{"axiom://one?profile=axiom-us-east-1.logma.sh", "axiom://two?profile=axiom-eu-central-1.logma.sh", "axiom://three?profile=axiom.logma.sh"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resolveInto = %#v, want %#v", got, want)
 	}
@@ -122,10 +113,7 @@ func TestDetachedRequiresDestination(t *testing.T) {
 }
 
 func TestLegacyNoStdoutAliasesDetached(t *testing.T) {
-	got, err := parseArgs([]string{
-		"us:west:events", "--no-stdout",
-		"--callback", "https://example.com/hook",
-	})
+	got, err := parseArgs([]string{"us:west:events", "--no-stdout", "--callback", "https://example.com/hook"})
 	if err != nil {
 		t.Fatal(err)
 	}
