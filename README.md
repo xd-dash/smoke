@@ -99,25 +99,15 @@ func init() {
 }
 ```
 
-Smoke dispatches directly:
+Smoke dispatches directly into that handler. For a Logmash launch, the handler performs the one OS-level lifetime transition that cannot be represented by a goroutine alone: it starts the same Smoke executable as the background runtime, then the launcher exits.
 
-```text
-smoke logmash ...
-      ↓
-command.Run("logmash", args)
-      ↓
-Logmash Run(args) in the same process
-```
-
-There is no PATH lookup, separate command installer, subprocess, or `exec` for normal foreground command execution.
+There is no PATH lookup and no separately installed Logmash executable.
 
 List the commands present in the current binary with:
 
 ```sh
 smoke commands
 ```
-
-Detached commands are different by necessity: Logmash starts the same `smoke` executable again as `smoke logmash ...`, with the detached-session environment marker set.
 
 ## Logmash source grammar
 
@@ -189,7 +179,7 @@ Every incoming callback message carries the logical source independently of the 
 }
 ```
 
-Foreground stdout preserves the relationship:
+Stdout preserves the relationship:
 
 ```text
 us:west:events	hello
@@ -224,33 +214,74 @@ axiom default <dataset>
 
 Dataset names remain runtime inputs and never enter DNS/Terraform state.
 
-## Foreground and detached lifecycle
+## Logmash lifecycle
 
-Foreground Logmash runs inside the Smoke process and stays attached to the caller's shell:
-
-```sh
-smoke logmash us:west:events us:east:events --into axiom eu mydataset
-```
-
-Ctrl+C cancels every source subscription and callback in the invocation.
-
-Detached mode explicitly starts another copy of the same Smoke binary:
+Background runtime is the default:
 
 ```sh
 smoke logmash \
   us:west:events \
   us:east:events \
-  --detached \
   --into axiom eu mydataset
 ```
 
-The child invocation is equivalent to:
+The launcher starts another process from the same Smoke executable in a new OS session and immediately returns the shell prompt. The child inherits the launcher's stdout and stderr, so stdout remains a normal Logmash callback even though the runtime process is detached from the launcher.
 
 ```text
-<current smoke executable> logmash <original Logmash arguments...>
+shell
+  │
+  ├── Smoke launcher ── exits
+  │
+  └── detached same Smoke executable
+          └── Logmash runtime
+                └── callback supervisor
+                      ├── stdout -> inherited terminal fd
+                      ├── Axiom
+                      └── webhook
 ```
 
-This keeps Logmash compiled into Smoke while still allowing a supervised background process.
+No socket, output log, tail process, daemon, or data IPC is required.
+
+List running runtimes:
+
+```sh
+smoke logmash list
+```
+
+Detach only stdout from a running session on Unix:
+
+```sh
+smoke logmash detach <session-id>
+```
+
+This sends `SIGUSR1` to the Logmash process. Logmash atomically removes the `stdout` callback while keeping Redis subscriptions and the remaining callbacks alive:
+
+```text
+before                   after detach
+stdout   ✓                stdout   ✕
+Axiom    ✓                Axiom    ✓
+webhook  ✓                webhook  ✓
+```
+
+The callback set is represented by immutable atomic snapshots, so stdout removal does not require a callback registry mutex and does not race an in-flight dispatch. A dispatch already holding the old snapshot may finish once; subsequent dispatches use the new set.
+
+If an inherited stdout write fails while callback policy is `continue`, Logmash removes stdout automatically and keeps the other callbacks running.
+
+Stop the entire runtime separately:
+
+```sh
+smoke logmash stop <session-id>
+```
+
+That sends `SIGTERM`, cancels the root runtime context, closes the Redis subscriptions, lets Logmash finish its callback supervision, and exits the process.
+
+For debugging or explicit shell-owned lifetime, bypass the default background launch with:
+
+```sh
+smoke logmash --foreground us:west:events
+```
+
+`--detached` remains accepted as a compatibility spelling but is no longer required. `--no-stdout` starts the runtime without the stdout callback.
 
 ## Package direction
 
@@ -275,4 +306,4 @@ local smoke composition main.go
 
 Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
 
-`xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke.
+`xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash itself owns subscription and callback supervision; Smoke only establishes the detached process lifetime and provides the small list/detach/stop control surface.
