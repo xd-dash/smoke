@@ -4,6 +4,8 @@
 
 The default composition includes Logmash directly. There is no separate `logmash` executable to resolve or install.
 
+The repository maintenance contract lives in [`SMOKE_IDIOMS.md`](./SMOKE_IDIOMS.md). The README describes user-facing behavior; the idiom file records the architectural invariants future changes should preserve.
+
 ```sh
 go install github.com/xd-dash/smoke/cmd/smoke@latest
 
@@ -80,9 +82,13 @@ build succeeded?
    no ──> keep current manifest + current binary
    yes
         ↓
-persist composition manifest
+snapshot previous manifest
+        ↓
+persist desired manifest
         ↓
 atomically rename candidate over current smoke executable
+        ↓
+rename failed? restore previous manifest
 ```
 
 The generated composition lives under the user's local data directory by default and has its own `go.mod` (`module smoke.local/composition`). When the running Smoke binary has module version information, that version of `github.com/xd-dash/smoke` is pinned in the generated `go.mod`; `SMOKE_MODULE_VERSION` can explicitly select the version for development or controlled recomposition.
