@@ -18,7 +18,7 @@ func TestParseArgsSourceQualified(t *testing.T) {
 		"--into", "axiom", "eu", "redis-events",
 		"--callback-policy", "fail-fast",
 		"--auth-provider", "acl-env",
-		"--detached",
+		"--foreground",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,10 +38,13 @@ func TestParseArgsSourceQualified(t *testing.T) {
 		{Provider: "axiom", Profile: "eu", Target: "redis-events"},
 	}
 	if !reflect.DeepEqual(got.Into, wantInto) {
-		t.Fatalf("into = %#v", got.Into)
+		t.Fatalf("into = %#v, want %#v", got.Into, wantInto)
 	}
-	if !got.Detached {
-		t.Fatal("expected detached")
+	if !got.Foreground {
+		t.Fatal("expected foreground")
+	}
+	if !got.Stdout {
+		t.Fatal("expected stdout callback by default")
 	}
 	if got.Policy != callback.FailFast {
 		t.Fatalf("policy = %q", got.Policy)
@@ -96,28 +99,38 @@ func TestResolveIntoAxiomAliases(t *testing.T) {
 	}
 }
 
-func TestForegroundNeedsNoDestination(t *testing.T) {
+func TestBackgroundIsDefaultAndKeepsStdout(t *testing.T) {
 	got, err := parseArgs([]string{"us:west:events"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Detached {
-		t.Fatal("foreground invocation unexpectedly detached")
+	if got.Foreground {
+		t.Fatal("default invocation unexpectedly foreground")
+	}
+	if !got.Stdout {
+		t.Fatal("default invocation should include stdout")
 	}
 }
 
-func TestDetachedRequiresDestination(t *testing.T) {
-	if _, err := parseArgs([]string{"us:west:events", "--detached"}); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestLegacyNoStdoutAliasesDetached(t *testing.T) {
-	got, err := parseArgs([]string{"us:west:events", "--no-stdout", "--callback", "https://example.com/hook"})
+func TestNoStdoutDoesNotRequireAnotherDestinationAtParseTime(t *testing.T) {
+	got, err := parseArgs([]string{"us:west:events", "--no-stdout"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Detached {
-		t.Fatal("expected compatibility alias to detach")
+	if got.Stdout {
+		t.Fatal("expected stdout disabled")
+	}
+}
+
+func TestDetachedFlagIsCompatibilityNoOp(t *testing.T) {
+	got, err := parseArgs([]string{"us:west:events", "--detached"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Foreground {
+		t.Fatal("--detached should retain background default")
+	}
+	if !got.Stdout {
+		t.Fatal("--detached must not disable stdout")
 	}
 }
