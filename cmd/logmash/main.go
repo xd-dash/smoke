@@ -18,12 +18,14 @@ import (
 )
 
 type sourceSelector struct {
-	Profile string
+	Country string
+	Region  string
 	Value   string
 	Pattern bool
 }
 
 type sourceSubscription struct {
+	Source       string
 	Profile      string
 	Channels     []string
 	Patterns     []string
@@ -90,9 +92,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "logmash: callback failure source=%s provider=%s channel=%s: %v\n", message.Source, message.Provider, message.Channel, err)
 	})
 
-	// Detachment is explicit. Callback shape never implicitly daemonizes a
-	// subscription. Without --detached the process remains in the caller's
-	// terminal/session and dies with Ctrl+C or normal shell/session teardown.
 	if cfg.Detached && os.Getenv("LOGMASH_DETACHED") != "1" {
 		pid, logPath, err := detach(os.Args[1:])
 		if err != nil {
@@ -132,16 +131,23 @@ func main() {
 
 func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, error) {
 	type grouped struct {
+		country  string
+		region   string
 		channels map[string]struct{}
 		patterns map[string]struct{}
 	}
 	groups := map[string]*grouped{}
 	for _, selector := range cfg.Sources {
-		profile := normalizeProfile(selector.Profile)
-		group := groups[profile]
+		source := logicalSource(selector.Country, selector.Region)
+		group := groups[source]
 		if group == nil {
-			group = &grouped{channels: map[string]struct{}{}, patterns: map[string]struct{}{}}
-			groups[profile] = group
+			group = &grouped{
+				country: selector.Country,
+				region: selector.Region,
+				channels: map[string]struct{}{},
+				patterns: map[string]struct{}{},
+			}
+			groups[source] = group
 		}
 		if selector.Pattern {
 			group.patterns[selector.Value] = struct{}{}
@@ -150,11 +156,11 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 		}
 	}
 
-	profiles := make([]string, 0, len(groups))
-	for profile := range groups {
-		profiles = append(profiles, profile)
+	sources := make([]string, 0, len(groups))
+	for source := range groups {
+		sources = append(sources, source)
 	}
-	sort.Strings(profiles)
+	sort.Strings(sources)
 
 	authRegistry, err := redisauth.New(
 		redisauth.None{},
@@ -166,11 +172,13 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 		return nil, fmt.Errorf("auth registry: %w", err)
 	}
 
-	out := make([]sourceSubscription, 0, len(profiles))
-	for _, profile := range profiles {
+	out := make([]sourceSubscription, 0, len(sources))
+	for _, source := range sources {
+		group := groups[source]
+		profile := sourceProfile(group.country, group.region)
 		target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s: %w", profile, err)
+			return nil, fmt.Errorf("resolve %s (%s): %w", source, profile, err)
 		}
 		authProvider := cfg.AuthProvider
 		if authProvider == "" {
@@ -181,18 +189,18 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 		}
 		authProfile := target.AuthProfile
 		if authProfile == "" {
-			authProfile = strings.TrimSuffix(profile, ".logma.sh")
+			authProfile = strings.ReplaceAll(source, ":", "-")
 		}
 		credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile)
 		if err != nil {
-			return nil, fmt.Errorf("%s auth provider %s: %w", profile, authProvider, err)
+			return nil, fmt.Errorf("%s auth provider %s: %w", source, authProvider, err)
 		}
 		target = credentials.Apply(target)
-		// Preserve logical source identity in every callback envelope. The
-		// physical Redis endpoint may change independently through DNS.
-		target.Source = profile
-		group := groups[profile]
+		// Preserve the human/logical source relationship in callback envelopes.
+		// DNS profile and physical Redis endpoint remain independently movable.
+		target.Source = source
 		out = append(out, sourceSubscription{
+			Source:       source,
 			Profile:      profile,
 			Channels:     sortedKeys(group.channels),
 			Patterns:     sortedKeys(group.patterns),
@@ -220,7 +228,7 @@ func runSources(parent context.Context, subscriptions []sourceSubscription, disp
 				Patterns: source.Patterns,
 			}, dispatcher)
 			if err != nil && ctx.Err() == nil {
-				errCh <- fmt.Errorf("source %s: %w", source.Profile, err)
+				errCh <- fmt.Errorf("source %s: %w", source.Source, err)
 				cancel()
 			}
 		}()
@@ -253,12 +261,11 @@ func runSources(parent context.Context, subscriptions []sourceSubscription, disp
 func sessionSelectors(subscriptions []sourceSubscription) (channels, patterns, profiles []string) {
 	for _, source := range subscriptions {
 		profiles = append(profiles, source.Profile)
-		short := strings.TrimSuffix(source.Profile, ".logma.sh")
 		for _, channel := range source.Channels {
-			channels = append(channels, short+":"+channel)
+			channels = append(channels, source.Source+":"+channel)
 		}
 		for _, pattern := range source.Patterns {
-			patterns = append(patterns, short+":"+pattern)
+			patterns = append(patterns, source.Source+":"+pattern)
 		}
 	}
 	return channels, patterns, profiles
@@ -320,7 +327,7 @@ func parseArgs(args []string) (cliArgs, error) {
 		case "--pattern", "-p":
 			i++
 			if i >= len(args) {
-				return cfg, fmt.Errorf("%s requires SOURCE:PATTERN", args[i-1])
+				return cfg, fmt.Errorf("%s requires COUNTRY:REGION:PATTERN", args[i-1])
 			}
 			selector, err := parseSourceSelector(args[i], true)
 			if err != nil {
@@ -334,8 +341,6 @@ func parseArgs(args []string) (cliArgs, error) {
 			cfg.Into = append(cfg.Into, intoSpec{Provider: args[i+1], Profile: args[i+2], Target: args[i+3]})
 			i += 3
 		case "--callback", "-c":
-			// Retained as a compatibility escape hatch. Managed destinations
-			// should use the human-readable --into grammar.
 			i++
 			if i >= len(args) {
 				return cfg, fmt.Errorf("%s requires a value", args[i-1])
@@ -356,7 +361,6 @@ func parseArgs(args []string) (cliArgs, error) {
 		case "--detached":
 			cfg.Detached = true
 		case "--no-stdout", "-q":
-			// Compatibility alias for the old callback-only background mode.
 			cfg.Detached = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
@@ -370,7 +374,7 @@ func parseArgs(args []string) (cliArgs, error) {
 		}
 	}
 	if len(cfg.Sources) == 0 {
-		return cfg, fmt.Errorf("usage: logmash SOURCE:CHANNEL [SOURCE:CHANNEL ...] [--pattern SOURCE:GLOB] [--detached] [--into PROVIDER PROFILE TARGET]")
+		return cfg, fmt.Errorf("usage: logmash COUNTRY:REGION:CHANNEL [COUNTRY:REGION:CHANNEL ...] [--pattern COUNTRY:REGION:GLOB] [--detached] [--into PROVIDER PROFILE TARGET]")
 	}
 	if cfg.Detached && len(cfg.Into) == 0 && len(cfg.Callbacks) == 0 {
 		return cfg, fmt.Errorf("--detached requires at least one --into destination")
@@ -380,25 +384,35 @@ func parseArgs(args []string) (cliArgs, error) {
 
 func parseSourceSelector(value string, pattern bool) (sourceSelector, error) {
 	value = strings.TrimSpace(value)
-	profile, item, ok := strings.Cut(value, ":")
-	profile = strings.TrimSpace(profile)
-	item = strings.TrimSpace(item)
-	if !ok || profile == "" || item == "" {
-		kind := "CHANNEL"
-		if pattern {
-			kind = "PATTERN"
-		}
-		return sourceSelector{}, fmt.Errorf("%q must be SOURCE:%s", value, kind)
+	parts := strings.SplitN(value, ":", 3)
+	if len(parts) != 3 {
+		return invalidSourceSelector(value, pattern)
 	}
-	return sourceSelector{Profile: profile, Value: item, Pattern: pattern}, nil
+	country := strings.ToLower(strings.TrimSpace(parts[0]))
+	region := strings.ToLower(strings.TrimSpace(parts[1]))
+	item := strings.TrimSpace(parts[2])
+	if country == "" || region == "" || item == "" || len(country) != 2 {
+		return invalidSourceSelector(value, pattern)
+	}
+	return sourceSelector{Country: country, Region: region, Value: item, Pattern: pattern}, nil
 }
 
-func normalizeProfile(name string) string {
-	name = strings.TrimSuffix(strings.TrimSpace(name), ".")
-	if strings.Contains(name, ".") {
-		return name
+func invalidSourceSelector(value string, pattern bool) (sourceSelector, error) {
+	kind := "CHANNEL"
+	if pattern {
+		kind = "PATTERN"
 	}
-	return name + ".logma.sh"
+	return sourceSelector{}, fmt.Errorf("%q must be COUNTRY:REGION:%s with a two-letter country code", value, kind)
+}
+
+func logicalSource(country, region string) string {
+	return strings.ToLower(strings.TrimSpace(country)) + ":" + strings.ToLower(strings.TrimSpace(region))
+}
+
+func sourceProfile(country, region string) string {
+	// DNS hierarchy is reversed relative to the human grammar: the broader
+	// country scope is the parent of the region label.
+	return strings.ToLower(strings.TrimSpace(region)) + "." + strings.ToLower(strings.TrimSpace(country)) + ".logma.sh"
 }
 
 func die(format string, args ...any) {
