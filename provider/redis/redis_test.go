@@ -39,3 +39,23 @@ func TestPublicSourceStripsSecretsAndCallbacks(t *testing.T) {
 		t.Fatalf("publicSource() = %q, want %q", got, want)
 	}
 }
+
+func TestRedisProfileMetadataSkipsOtherSmokeProfiles(t *testing.T) {
+	meta, ok := redisProfileMetadata([]string{
+		"verification=example",
+		"smoke=v1;provider=axiom;domain=example.axiom.co",
+		"smoke=v1;provider=redis;tls=true;auth-provider=acl-env;auth=us-west",
+	})
+	if !ok {
+		t.Fatal("expected Redis profile")
+	}
+	if meta["provider"] != "redis" || meta["tls"] != "true" || meta["auth"] != "us-west" {
+		t.Fatalf("unexpected metadata: %#v", meta)
+	}
+}
+
+func TestRedisProfileMetadataRejectsMissingRedisProfile(t *testing.T) {
+	if _, ok := redisProfileMetadata([]string{"smoke=v1;provider=axiom"}); ok {
+		t.Fatal("unexpected Redis profile")
+	}
+}
