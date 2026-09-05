@@ -53,44 +53,46 @@ func Save(manifest Manifest) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	tmp := path + fmt.Sprintf(".tmp-%d", os.Getpid())
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace composition manifest: %w", err)
+	}
+	return nil
 }
 
-func Add(importPath string) (Manifest, error) {
-	manifest, err := Load()
-	if err != nil {
-		return Manifest{}, err
-	}
-	manifest.Components = append(manifest.Components, importPath)
+func WithAdded(manifest Manifest, importPath string) Manifest {
+	manifest.Components = append(manifest.Components, strings.TrimSpace(importPath))
 	manifest.Components = normalize(manifest.Components)
-	return manifest, Save(manifest)
+	return manifest
 }
 
-func Remove(importPath string) (Manifest, error) {
-	manifest, err := Load()
-	if err != nil {
-		return Manifest{}, err
-	}
+func WithRemoved(manifest Manifest, importPath string) Manifest {
 	needle := strings.TrimSpace(importPath)
-	out := manifest.Components[:0]
+	out := make([]string, 0, len(manifest.Components))
 	for _, component := range manifest.Components {
-		if component != needle {
+		if strings.TrimSpace(component) != needle {
 			out = append(out, component)
 		}
 	}
 	manifest.Components = normalize(out)
-	return manifest, Save(manifest)
+	return manifest
 }
 
-func Rebuild(ctx context.Context) (string, error) {
+// Apply builds the requested composition first. Only after the Go build
+// succeeds does it persist the manifest and atomically replace the current
+// Smoke executable. A bad optional component therefore leaves the currently
+// running Smoke binary and the previous manifest intact.
+func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return "", fmt.Errorf("Smoke recomposition requires a preinstalled Go toolchain: %w", err)
 	}
-	manifest, err := Load()
-	if err != nil {
-		return "", err
-	}
+	manifest.Components = normalize(manifest.Components)
+
 	sourceDir, err := compositionDir()
 	if err != nil {
 		return "", err
@@ -125,8 +127,15 @@ func Rebuild(ctx context.Context) (string, error) {
 	if current, err := os.Stat(target); err == nil {
 		_ = os.Chmod(staged, current.Mode().Perm())
 	}
+
 	if runtime.GOOS == "windows" {
 		return staged, fmt.Errorf("built replacement at %s; in-place replacement of the running executable is not yet supported on Windows", staged)
+	}
+
+	// Do not commit a bad desired composition. Persist only after the candidate
+	// build has succeeded, then replace the executable with the exact candidate.
+	if err := Save(manifest); err != nil {
+		return "", err
 	}
 	if err := os.Rename(staged, target); err != nil {
 		return "", fmt.Errorf("replace %s: %w", target, err)
@@ -173,15 +182,20 @@ func moduleVersion() string {
 	if !ok {
 		return ""
 	}
-	if info.Main.Path == "github.com/xd-dash/smoke" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info.Main.Path == "github.com/xd-dash/smoke" && usableVersion(info.Main.Version) {
 		return info.Main.Version
 	}
 	for _, dep := range info.Deps {
-		if dep.Path == "github.com/xd-dash/smoke" && dep.Version != "" && dep.Version != "(devel)" {
+		if dep.Path == "github.com/xd-dash/smoke" && usableVersion(dep.Version) {
 			return dep.Version
 		}
 	}
 	return ""
+}
+
+func usableVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	return version != "" && version != "(devel)"
 }
 
 func manifestPath() (string, error) {
