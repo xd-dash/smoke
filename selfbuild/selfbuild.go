@@ -182,7 +182,7 @@ func moduleVersion() string {
 	if !ok {
 		return ""
 	}
-	if info.Main.Path == "github.com/xd-dash/smoke" && usableVersion(info.Main.Version) {
+	if (info.Main.Path == "github.com/xd-dash/smoke" || strings.HasPrefix(info.Main.Path, "github.com/xd-dash/smoke/")) && usableVersion(info.Main.Version) {
 		return info.Main.Version
 	}
 	for _, dep := range info.Deps {
