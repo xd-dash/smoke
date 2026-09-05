@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -86,6 +87,7 @@ func (a Axiom) Handle(ctx context.Context, message Message) error {
 		return fmt.Errorf("Axiom ingest: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Axiom ingest returned %s", resp.Status)
 	}
