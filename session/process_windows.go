@@ -3,6 +3,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -23,4 +24,8 @@ func stopProcess(pid int) error {
 		return err
 	}
 	return process.Kill()
+}
+
+func detachOutputProcess(pid int) error {
+	return fmt.Errorf("stdout detach signal is not supported on Windows for pid %d", pid)
 }
