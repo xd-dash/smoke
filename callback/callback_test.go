@@ -56,3 +56,55 @@ func TestDispatcherRejectsUnknownFailurePolicy(t *testing.T) {
 		t.Fatal("SetFailurePolicy() error = nil, want error")
 	}
 }
+
+func TestDispatcherRemoveStdoutKeepsOtherCallbacks(t *testing.T) {
+	var stdoutCalls atomic.Int32
+	var webhookCalls atomic.Int32
+	d := New(
+		callbackFunc{name: "stdout", fn: func(context.Context, Message) error { stdoutCalls.Add(1); return nil }},
+		callbackFunc{name: "webhook", fn: func(context.Context, Message) error { webhookCalls.Add(1); return nil }},
+	)
+	if !d.HasStdout() {
+		t.Fatal("expected stdout callback")
+	}
+	if !d.Remove("stdout") {
+		t.Fatal("Remove(stdout) = false, want true")
+	}
+	if d.HasStdout() {
+		t.Fatal("stdout callback still present")
+	}
+	if err := d.Dispatch(context.Background(), Message{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdoutCalls.Load(); got != 0 {
+		t.Fatalf("stdout calls = %d, want 0", got)
+	}
+	if got := webhookCalls.Load(); got != 1 {
+		t.Fatalf("webhook calls = %d, want 1", got)
+	}
+}
+
+func TestDispatcherStdoutFailureDetachesInContinueMode(t *testing.T) {
+	stdoutErr := errors.New("terminal gone")
+	var stdoutCalls atomic.Int32
+	var webhookCalls atomic.Int32
+	d := New(
+		callbackFunc{name: "stdout", fn: func(context.Context, Message) error { stdoutCalls.Add(1); return stdoutErr }},
+		callbackFunc{name: "webhook", fn: func(context.Context, Message) error { webhookCalls.Add(1); return nil }},
+	)
+	if err := d.Dispatch(context.Background(), Message{}); err != nil {
+		t.Fatalf("first Dispatch() error = %v", err)
+	}
+	if d.HasStdout() {
+		t.Fatal("stdout should detach after write failure")
+	}
+	if err := d.Dispatch(context.Background(), Message{}); err != nil {
+		t.Fatalf("second Dispatch() error = %v", err)
+	}
+	if got := stdoutCalls.Load(); got != 1 {
+		t.Fatalf("stdout calls = %d, want 1", got)
+	}
+	if got := webhookCalls.Load(); got != 2 {
+		t.Fatalf("webhook calls = %d, want 2", got)
+	}
+}
