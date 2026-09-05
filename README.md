@@ -1,38 +1,123 @@
 # smoke
 
-`smoke` is the bootstrap/resolution front-end for registered commands. Once a command is resolved, Smoke gets out of the way.
+`smoke` is a self-composed Go executable. Optional commands and providers are linked into the `smoke` binary by importing their Go packages into a tiny local composition program and rebuilding that program with the system Go toolchain.
 
-The first registered command is `logmash`:
+The default composition includes Logmash directly. There is no separate `logmash` executable to resolve or install.
 
 ```sh
+go install github.com/xd-dash/smoke/cmd/smoke@latest
+
 smoke logmash us:west:events us:east:events
 ```
 
-and, once `logmash` is installed/resolved:
+Conceptually the installed binary is built from a composition like:
 
-```sh
-logmash us:west:events us:east:events
+```go
+package main
+
+import (
+    "os"
+
+    _ "github.com/xd-dash/smoke/cmd/logmash"
+    "github.com/xd-dash/smoke/smokeapp"
+)
+
+func main() {
+    smokeapp.Main(os.Args[1:])
+}
 ```
 
-has the same semantics. On Unix, Smoke replaces itself with the resolved command using `exec`, so terminal ownership and signal behavior are the same as invoking Logmash directly.
+The blank import is the composition boundary. Importing the Logmash package causes its `init` function to register the in-process `logmash` command. Packages that are not imported are not linked into that Smoke executable.
 
-Smoke does not know Redis, Axiom, Cloudflare, Fatline, or Logmash DNS grammar. Those are owned below the registered-command boundary.
+## Self composition
 
-## Command resolution
+Smoke requires a preinstalled Go toolchain for recomposition.
 
-For a registered command such as `logmash`, Smoke resolves in this order:
+The local desired composition is stored as a list of Go import paths. By default it contains:
 
 ```text
-SMOKE_COMMAND_LOGMASH=/explicit/path
-        ↓
-PATH
-        ↓
-sibling executable next to smoke
-        ↓
-registered installer
+github.com/xd-dash/smoke/cmd/logmash
 ```
 
-If Logmash is not already present, Smoke installs the registered command into `~/.local/bin` (or `SMOKE_BIN_DIR`). When Smoke has module build-version identity, the installer uses the same module version for Logmash.
+Inspect it with:
+
+```sh
+smoke compose show
+```
+
+Add another optional command/provider package and rebuild Smoke:
+
+```sh
+smoke compose add example.com/acme/smoke-provider
+```
+
+Remove one:
+
+```sh
+smoke compose remove example.com/acme/smoke-provider
+```
+
+Or rebuild the current composition without changing it:
+
+```sh
+smoke compose rebuild
+```
+
+Recomposition performs:
+
+```text
+composition manifest
+        ↓
+generate local main.go
+        ↓
+generate local go.mod
+        ↓
+go mod tidy
+        ↓
+go build candidate Smoke binary
+        ↓
+build succeeded?
+   no ──> keep current manifest + current binary
+   yes
+        ↓
+persist composition manifest
+        ↓
+atomically rename candidate over current smoke executable
+```
+
+The generated composition lives under the user's local data directory by default and has its own `go.mod` (`module smoke.local/composition`). When the running Smoke binary has module version information, that version of `github.com/xd-dash/smoke` is pinned in the generated `go.mod`; `SMOKE_MODULE_VERSION` can explicitly select the version for development or controlled recomposition.
+
+This is intentionally normal Go dependency composition rather than a runtime plugin system. Optional packages depend on Smoke's core interfaces; Smoke's local composition chooses which optional packages to import.
+
+## Compiled-in command registry
+
+Optional command packages register an in-process handler:
+
+```go
+func init() {
+    command.Register("logmash", Run)
+}
+```
+
+Smoke dispatches directly:
+
+```text
+smoke logmash ...
+      ↓
+command.Run("logmash", args)
+      ↓
+Logmash Run(args) in the same process
+```
+
+There is no PATH lookup, separate command installer, subprocess, or `exec` for normal foreground command execution.
+
+List the commands present in the current binary with:
+
+```sh
+smoke commands
+```
+
+Detached commands are different by necessity: Logmash starts the same `smoke` executable again as `smoke logmash ...`, with the detached-session environment marker set.
 
 ## Logmash source grammar
 
@@ -42,47 +127,35 @@ A Redis subscription is one atomic geographic source relationship:
 COUNTRY:REGION:CHANNEL
 ```
 
-The country is a two-letter country code. Country and region are normalized to lowercase.
-
 Examples:
 
 ```sh
-logmash us:west:events
-logmash us:west:events us:west:ratelimiters
-logmash us:west:events us:west:ratelimiters us:east:events
+smoke logmash us:west:events
+smoke logmash us:west:events us:west:ratelimiters
+smoke logmash us:west:events us:west:ratelimiters us:east:events
 ```
 
-The human source `us:west` resolves through the DNS hierarchy:
+The country is a two-letter country code. Country and region are normalized to lowercase.
+
+The human source maps to managed DNS as:
 
 ```text
 us:west
     ↓
 west.us.logma.sh
-```
 
-Likewise:
-
-```text
 us:east
     ↓
 east.us.logma.sh
 ```
 
-The CLI is broad-to-narrow (`country:region:channel`) while DNS is naturally hierarchical (`region.country.logma.sh`). The DNS encoding is an implementation detail: callback provenance remains the logical source `us:west` or `us:east`.
-
-One invocation can fan in from several independently resolved Redis-compatible sources:
-
-```sh
-logmash \
-  us:west:events \
-  us:west:ratelimiters \
-  us:east:events
-```
+The CLI remains broad-to-narrow (`country:region:channel`) while DNS remains hierarchical (`region.country.logma.sh`). Callback provenance keeps the logical source (`us:west`), not the DNS spelling or physical Redis host.
 
 Selectors are grouped by `country:region` before connecting:
 
 ```text
 us:west:events
+us:west:ratelimiters
 us:west:ratelimiters
         ↓
 one west.us.logma.sh Redis Pub/Sub connection
@@ -96,26 +169,15 @@ one east.us.logma.sh Redis Pub/Sub connection
 
 Exact duplicate selectors are deduplicated within each source group.
 
-Older ambiguous forms such as:
-
-```text
-logmash west events
-logmash west:events
-```
-
-are intentionally rejected. Country, region, and channel association must be explicit.
-
 Pattern subscriptions use the same hierarchy:
 
 ```sh
-logmash us:west:events --pattern 'us:east:worker:*'
+smoke logmash us:west:events --pattern 'us:east:worker:*'
 ```
-
-which means direct `us:west:events` plus `PSUBSCRIBE worker:*` on `east.us.logma.sh`.
 
 ## Source provenance
 
-Every incoming callback message carries the logical geographic source independently of the physical Redis endpoint:
+Every incoming callback message carries the logical source independently of the physical Redis endpoint:
 
 ```json
 {
@@ -127,9 +189,7 @@ Every incoming callback message carries the logical geographic source independen
 }
 ```
 
-DNS can therefore move `west.us.logma.sh` between Fatlines/hosts without changing event identity.
-
-Foreground stdout preserves the full relationship:
+Foreground stdout preserves the relationship:
 
 ```text
 us:west:events	hello
@@ -139,29 +199,17 @@ us:east:events	deployed
 
 ## Human-readable routing grammar
 
-Managed callback destinations use `--into` rather than requiring URLs:
-
-```sh
-logmash \
-  us:west:events \
-  us:west:ratelimiters \
-  us:east:events \
-  --into axiom east mydataset \
-  --into axiom eu mydataset
-```
-
-The same command through Smoke is equivalent after resolution:
+Managed callback destinations use `--into` rather than requiring callback URLs:
 
 ```sh
 smoke logmash \
   us:west:events \
-  us:west:ratelimiters \
   us:east:events \
   --into axiom east mydataset \
   --into axiom eu mydataset
 ```
 
-Current Axiom aliases are:
+Current Axiom aliases include:
 
 ```text
 axiom east <dataset>
@@ -174,81 +222,57 @@ axiom default <dataset>
     -> axiom.logma.sh
 ```
 
-Dataset names remain runtime input and never enter DNS/Terraform state. Axiom receives the normal callback envelope, including the logical `country:region` source.
+Dataset names remain runtime inputs and never enter DNS/Terraform state.
 
 ## Foreground and detached lifecycle
 
-Foreground:
+Foreground Logmash runs inside the Smoke process and stays attached to the caller's shell:
 
 ```sh
-logmash us:west:events us:east:events --into axiom eu mydataset
+smoke logmash us:west:events us:east:events --into axiom eu mydataset
 ```
 
-remains attached to the caller's shell/terminal. Ctrl+C cancels every source subscription and callback in the invocation.
+Ctrl+C cancels every source subscription and callback in the invocation.
 
-Detached:
+Detached mode explicitly starts another copy of the same Smoke binary:
 
 ```sh
-logmash \
+smoke logmash \
   us:west:events \
   us:east:events \
   --detached \
   --into axiom eu mydataset
 ```
 
-creates one supervised Logmash process containing all source subscriptions. If one source fails unexpectedly, sibling source subscriptions are cancelled instead of leaving a partial fan-in running.
-
-## Session supervision
-
-Logmash keeps lightweight local process-bound supervision state:
-
-```sh
-logmash list
-logmash stop <session-id>
-```
-
-Example shape:
+The child invocation is equivalent to:
 
 ```text
-4c1d8eaa9321 pid=4127 profiles=east.us.logma.sh,west.us.logma.sh sources=2
-  channels: us:east:events, us:west:events, us:west:ratelimiters
-  callbacks: axiom:mydataset@axiom-eu-central-1.logma.sh
-  auth: acl-env
+<current smoke executable> logmash <original Logmash arguments...>
 ```
 
-This remains intentionally lighter than `xd-dash/logma`, which owns durable Channel/Subscriber/Callback/Publisher resources.
+This keeps Logmash compiled into Smoke while still allowing a supervised background process.
 
-## Redis auth providers
+## Package direction
 
-Redis transport and authentication remain separate composition boundaries:
+The intended dependency direction is:
 
 ```text
-none
-password-env
-acl-env
-auto-env
+smoke core
+  command registry
+  selfbuild/recomposition
+  application dispatcher
+        ↑
+        │ imports core contracts
+        │
+optional command/provider packages
+  cmd/logmash
+  future providers/commands
+        ↑
+        │ selected by local composition imports
+        │
+local smoke composition main.go
 ```
 
-Auth is resolved independently for each geographic source profile. If DNS does not specify an auth profile, `us:west` falls back to the local auth profile name `us-west`.
+Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
 
-## Package boundaries
-
-```text
-smoke
-  registered-command resolution
-  install/bootstrap
-  exec
-
-logmash
-  COUNTRY:REGION:CHANNEL grammar
-  geographic multi-source fan-in
-  provider DNS resolution
-  Redis subscription lifecycle
-  callback composition
-  local supervision
-
-xd-dash/logma
-  durable resource graph
-  retained subscriber/publisher/channel state
-  activation/reconciliation
-```
+`xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke.
