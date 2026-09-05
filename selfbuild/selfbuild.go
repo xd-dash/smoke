@@ -84,8 +84,9 @@ func WithRemoved(manifest Manifest, importPath string) Manifest {
 
 // Apply builds the requested composition first. Only after the Go build
 // succeeds does it persist the manifest and atomically replace the current
-// Smoke executable. A bad optional component therefore leaves the currently
-// running Smoke binary and the previous manifest intact.
+// Smoke executable. If executable replacement fails after the manifest write,
+// the previous manifest bytes are restored so desired state does not advance
+// past the executable that is still installed.
 func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -132,15 +133,54 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 		return staged, fmt.Errorf("built replacement at %s; in-place replacement of the running executable is not yet supported on Windows", staged)
 	}
 
-	// Do not commit a bad desired composition. Persist only after the candidate
-	// build has succeeded, then replace the executable with the exact candidate.
+	manifestPath, previousManifest, previousManifestExists, err := snapshotManifest()
+	if err != nil {
+		return "", err
+	}
 	if err := Save(manifest); err != nil {
 		return "", err
 	}
 	if err := os.Rename(staged, target); err != nil {
+		if rollbackErr := restoreManifest(manifestPath, previousManifest, previousManifestExists); rollbackErr != nil {
+			return "", fmt.Errorf("replace %s: %w; restore previous composition manifest: %v", target, err, rollbackErr)
+		}
 		return "", fmt.Errorf("replace %s: %w", target, err)
 	}
 	return target, nil
+}
+
+func snapshotManifest() (string, []byte, bool, error) {
+	path, err := manifestPath()
+	if err != nil {
+		return "", nil, false, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return path, nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("snapshot composition manifest: %w", err)
+	}
+	return path, data, true, nil
+}
+
+func restoreManifest(path string, data []byte, existed bool) error {
+	if !existed {
+		err := os.Remove(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + fmt.Sprintf(".rollback-%d", os.Getpid())
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	return os.Rename(tmp, path)
 }
 
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
