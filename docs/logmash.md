@@ -1,72 +1,104 @@
 # logmash
 
-`logmash` is the user-facing wrapper over Smoke's Redis provider. It resolves a `logma.sh` profile through DNS, composes channels/patterns and callbacks locally, and connects directly to the resolved Farcaster/World Redis ingress.
+`logmash` is compiled into Smoke and provides ephemeral multi-source Redis receive/route behavior. It resolves `logma.sh` provider profiles through DNS, composes channels/patterns and callbacks locally, and connects directly to the resolved Redis ingress.
 
 DNS is discovery only. It does not carry topics, callback destinations, or credentials.
 
-Expected records:
+A source selector is:
 
 ```text
-west.logma.sh TXT "smoke=v1;provider=redis;auth=west;tls=true"
-_rediss._tcp.west.logma.sh SRV 10 10 6380 farcaster.xd.run.
+COUNTRY:REGION:CHANNEL
 ```
 
-The SRV target resolves normally with A/AAAA. When Cloudflare is authoritative DNS, Redis-facing endpoint records are DNS-only; nginx stream on the Farcaster/World is the TCP/TLS ingress.
-
-## CLI
-
-Stdout is the default callback:
+For example:
 
 ```sh
-logmash west events
-logmash west events deployments
-logmash prod.us-west1 prices trades
+smoke logmash us:west:events us:east:events
 ```
 
-Pattern subscription:
+`us:west` maps to `west.us.logma.sh`; `us:east` maps to `east.us.logma.sh`.
+
+Pattern subscription uses the same source qualification:
 
 ```sh
-logmash west --pattern 'worker:*'
-logmash west events --pattern 'worker:*'
+smoke logmash us:west:events --pattern 'us:east:worker:*'
 ```
 
-Add webhooks while retaining stdout:
+Managed callback destinations compose with stdout:
 
 ```sh
-logmash west events \
-  --callback https://example.com/hook \
-  --callback https://example.net/hook
-```
-
-Webhook-only subscriptions detach and return the shell immediately:
-
-```sh
-logmash west events \
-  --no-stdout \
+smoke logmash \
+  us:west:events \
+  --into axiom east mydataset \
   --callback https://example.com/hook
 ```
 
 Callback failure is non-fatal by default. Use `--callback-policy fail-fast` when callback delivery is itself the required operation.
 
-Shorthand profile names are normalized under `logma.sh`; `west` becomes `west.logma.sh`. Full FQDNs are accepted unchanged.
+## Process and callback lifecycle
+
+Background runtime is the default. The first Smoke invocation starts another process from the same Smoke executable and then returns the shell prompt. The child is placed in a new OS session on Unix, but it inherits the launcher's stdout/stderr descriptors.
+
+```text
+Smoke launcher
+   └── same Smoke executable
+         └── Logmash runtime
+               └── callbacks
+                     ├── stdout
+                     ├── Axiom
+                     └── webhook
+```
+
+Process detachment and stdout detachment are separate. Stdout remains an ordinary callback until explicitly removed or until its inherited descriptor fails.
+
+List runtimes:
+
+```sh
+smoke logmash list
+```
+
+Detach only stdout on Unix:
+
+```sh
+smoke logmash detach <session-id>
+```
+
+This sends `SIGUSR1`. The running Logmash process atomically removes `stdout` from its callback snapshot. Redis subscriptions and all other callbacks continue.
+
+Stop the entire runtime:
+
+```sh
+smoke logmash stop <session-id>
+```
+
+This sends `SIGTERM`, cancels the root context, and lets Logmash shut down subscriptions and callbacks before process exit.
+
+For explicit foreground ownership:
+
+```sh
+smoke logmash --foreground us:west:events
+```
+
+`--no-stdout` starts without the stdout callback. `--detached` remains accepted for compatibility but background launch is already the default.
+
+There is no output socket, tail process, persisted stdout log, or resident Smoke daemon in this model.
+
+## Lockless callback membership
+
+The dispatcher holds callback membership as an immutable atomic snapshot. `detach` replaces that snapshot without a mutex. An in-flight dispatch may finish against its existing snapshot; subsequent messages observe stdout as removed.
+
+If stdout delivery itself fails under the default `continue` policy, stdout is removed automatically and the remaining callbacks continue.
 
 ## Authentication profiles
 
-The TXT record may contain a non-secret selector such as `auth=west`. The current CLI resolves that selector from environment variables:
-
-```text
-LOGMASH_REDIS_WEST_USERNAME
-LOGMASH_REDIS_WEST_PASSWORD
-```
-
-Dots, dashes and colons in the profile name are normalized to underscores for the environment key. This is an initial credential adapter; future SOPS/Marai resolvers can populate the same typed Redis target without changing Pub/Sub semantics.
+Redis DNS may advertise a non-secret auth profile. Credentials are resolved locally by the selected auth provider; credentials are never stored in DNS.
 
 ## Package composition
 
-The provider API is typed:
+The Redis provider boundary remains typed:
 
 ```go
-target, err := (redisprovider.DNSResolver{}).Resolve(ctx, "west.logma.sh")
+target, err := (redisprovider.DNSResolver{}).Resolve(ctx, "west.us.logma.sh")
 if err != nil {
     return err
 }
@@ -80,4 +112,4 @@ sub := redisprovider.Subscription{
 return redisprovider.New().RunSubscription(ctx, sub, dispatcher)
 ```
 
-Raw `redis://`, `rediss://`, and `redis+unix://` Smoke URLs delegate into the same `RunSubscription` implementation. DNS/URLs are interchange forms; `Target` and `Subscription` are the preferred in-process composition boundary.
+Logmash owns its subscription and callback supervision. Smoke owns composition and the small OS-process control surface around the runtime.
