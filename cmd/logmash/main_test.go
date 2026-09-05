@@ -18,7 +18,7 @@ func TestParseArgsSourceQualified(t *testing.T) {
 		"--into", "axiom", "eu", "redis-events",
 		"--callback-policy", "fail-fast",
 		"--auth-provider", "acl-env",
-		"--foreground",
+		"--attached",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,8 +40,8 @@ func TestParseArgsSourceQualified(t *testing.T) {
 	if !reflect.DeepEqual(got.Into, wantInto) {
 		t.Fatalf("into = %#v, want %#v", got.Into, wantInto)
 	}
-	if !got.Foreground {
-		t.Fatal("expected foreground")
+	if !got.Attached {
+		t.Fatal("expected attached")
 	}
 	if !got.Stdout {
 		t.Fatal("expected stdout callback by default")
@@ -99,38 +99,59 @@ func TestResolveIntoAxiomAliases(t *testing.T) {
 	}
 }
 
-func TestBackgroundIsDefaultAndKeepsStdout(t *testing.T) {
+func TestDefaultIncludesStdoutAndIsAttachedBySemantics(t *testing.T) {
 	got, err := parseArgs([]string{"us:west:events"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Foreground {
-		t.Fatal("default invocation unexpectedly foreground")
-	}
 	if !got.Stdout {
 		t.Fatal("default invocation should include stdout")
 	}
+	if got.Attached {
+		t.Fatal("attached override should be unnecessary when stdout is present")
+	}
+	if unattended(got) {
+		t.Fatal("stdout invocation must not be unattended")
+	}
 }
 
-func TestNoStdoutDoesNotRequireAnotherDestinationAtParseTime(t *testing.T) {
-	got, err := parseArgs([]string{"us:west:events", "--no-stdout"})
+func TestNoStdoutIsUnattended(t *testing.T) {
+	got, err := parseArgs([]string{"us:west:events", "--no-stdout", "--callback", "https://example.com/hook"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Stdout {
 		t.Fatal("expected stdout disabled")
 	}
+	if !unattended(got) {
+		t.Fatal("no-stdout runtime should be unattended")
+	}
 }
 
-func TestDetachedFlagIsCompatibilityNoOp(t *testing.T) {
-	got, err := parseArgs([]string{"us:west:events", "--detached"})
+func TestAttachedOverridesNoStdoutUnattendedLifetime(t *testing.T) {
+	got, err := parseArgs([]string{"us:west:events", "--no-stdout", "--attached", "--callback", "https://example.com/hook"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Foreground {
-		t.Fatal("--detached should retain background default")
+	if got.Stdout {
+		t.Fatal("expected stdout disabled")
 	}
-	if !got.Stdout {
-		t.Fatal("--detached must not disable stdout")
+	if !got.Attached {
+		t.Fatal("expected attached override")
 	}
+	if unattended(got) {
+		t.Fatal("--attached must keep no-stdout runtime attached")
+	}
+}
+
+func TestDetachedAndForegroundFlagsAreRemoved(t *testing.T) {
+	for _, flag := range []string{"--detached", "--foreground"} {
+		if _, err := parseArgs([]string{"us:west:events", flag}); err == nil {
+			t.Fatalf("expected %s to be rejected", flag)
+		}
+	}
+}
+
+func unattended(cfg cliArgs) bool {
+	return !cfg.Stdout && !cfg.Attached
 }
