@@ -5,13 +5,13 @@
 The first registered command is `logmash`:
 
 ```sh
-smoke logmash west:events east:events
+smoke logmash us:west:events us:east:events
 ```
 
 and, once `logmash` is installed/resolved:
 
 ```sh
-logmash west:events east:events
+logmash us:west:events us:east:events
 ```
 
 has the same semantics. On Unix, Smoke replaces itself with the resolved command using `exec`, so terminal ownership and signal behavior are the same as invoking Logmash directly.
@@ -36,89 +36,106 @@ If Logmash is not already present, Smoke installs the registered command into `~
 
 ## Logmash source grammar
 
-A Redis subscription is written as one atomic source relationship:
+A Redis subscription is one atomic geographic source relationship:
 
 ```text
-SOURCE:CHANNEL
+COUNTRY:REGION:CHANNEL
 ```
+
+The country is a two-letter country code. Country and region are normalized to lowercase.
 
 Examples:
 
 ```sh
-logmash west:events
-logmash west:events west:ratelimiters
-logmash west:events west:ratelimiters east:events
+logmash us:west:events
+logmash us:west:events us:west:ratelimiters
+logmash us:west:events us:west:ratelimiters us:east:events
 ```
 
-The source is a Logmash DNS profile. `west` resolves as `west.logma.sh`; `east` resolves as `east.logma.sh`.
+The human source `us:west` resolves through the DNS hierarchy:
 
-One invocation can therefore fan in from several independently resolved Redis-compatible sources:
+```text
+us:west
+    ↓
+west.us.logma.sh
+```
+
+Likewise:
+
+```text
+us:east
+    ↓
+east.us.logma.sh
+```
+
+The CLI is broad-to-narrow (`country:region:channel`) while DNS is naturally hierarchical (`region.country.logma.sh`). The DNS encoding is an implementation detail: callback provenance remains the logical source `us:west` or `us:east`.
+
+One invocation can fan in from several independently resolved Redis-compatible sources:
 
 ```sh
 logmash \
-  west:events \
-  west:ratelimiters \
-  east:events
+  us:west:events \
+  us:west:ratelimiters \
+  us:east:events
 ```
 
-Selectors are grouped by source before connecting:
+Selectors are grouped by `country:region` before connecting:
 
 ```text
-west:events
-west:ratelimiters
+us:west:events
+us:west:ratelimiters
         ↓
-one west.logma.sh Redis Pub/Sub connection
+one west.us.logma.sh Redis Pub/Sub connection
   SUBSCRIBE events ratelimiters
 
-east:events
+us:east:events
         ↓
-one east.logma.sh Redis Pub/Sub connection
+one east.us.logma.sh Redis Pub/Sub connection
   SUBSCRIBE events
 ```
 
-Exact duplicate selectors are deduplicated within the source group.
+Exact duplicate selectors are deduplicated within each source group.
 
-The old ambiguous grammar:
+Older ambiguous forms such as:
 
 ```text
 logmash west events
+logmash west:events
 ```
 
-is intentionally rejected. Source/channel association should always be explicit.
+are intentionally rejected. Country, region, and channel association must be explicit.
 
-Pattern subscriptions use the same source relationship:
+Pattern subscriptions use the same hierarchy:
 
 ```sh
-logmash west:events --pattern 'east:worker:*'
+logmash us:west:events --pattern 'us:east:worker:*'
 ```
 
-which means direct `west:events` plus `PSUBSCRIBE worker:*` on `east.logma.sh`.
+which means direct `us:west:events` plus `PSUBSCRIBE worker:*` on `east.us.logma.sh`.
 
 ## Source provenance
 
-Every incoming callback message carries the logical source profile independently of the physical Redis endpoint:
+Every incoming callback message carries the logical geographic source independently of the physical Redis endpoint:
 
 ```json
 {
   "provider": "redis",
-  "source": "west.logma.sh",
+  "source": "us:west",
   "channel": "events",
   "pattern": "",
   "payload": "hello"
 }
 ```
 
-This lets DNS move `west.logma.sh` between Fatlines/hosts without changing event identity.
+DNS can therefore move `west.us.logma.sh` between Fatlines/hosts without changing event identity.
 
-Foreground stdout also preserves that relationship:
+Foreground stdout preserves the full relationship:
 
 ```text
-west:events    hello
-west:ratelimiters    allowed
- east:events    deployed
+us:west:events	hello
+us:west:ratelimiters	allowed
+us:east:events	deployed
 ```
-
-(the separator between selector and payload is a tab).
 
 ## Human-readable routing grammar
 
@@ -126,9 +143,9 @@ Managed callback destinations use `--into` rather than requiring URLs:
 
 ```sh
 logmash \
-  west:events \
-  west:ratelimiters \
-  east:events \
+  us:west:events \
+  us:west:ratelimiters \
+  us:east:events \
   --into axiom east mydataset \
   --into axiom eu mydataset
 ```
@@ -137,9 +154,9 @@ The same command through Smoke is equivalent after resolution:
 
 ```sh
 smoke logmash \
-  west:events \
-  west:ratelimiters \
-  east:events \
+  us:west:events \
+  us:west:ratelimiters \
+  us:east:events \
   --into axiom east mydataset \
   --into axiom eu mydataset
 ```
@@ -157,46 +174,44 @@ axiom default <dataset>
     -> axiom.logma.sh
 ```
 
-Dataset names remain runtime input and never enter DNS/Terraform state. Axiom receives the normal callback envelope, including `source`, so one dataset can safely ingest events from multiple Logmash sources while retaining provenance.
-
-The older `--callback URL` form remains as an ad-hoc compatibility escape hatch.
+Dataset names remain runtime input and never enter DNS/Terraform state. Axiom receives the normal callback envelope, including the logical `country:region` source.
 
 ## Foreground and detached lifecycle
 
 Foreground:
 
 ```sh
-logmash west:events east:events --into axiom eu mydataset
+logmash us:west:events us:east:events --into axiom eu mydataset
 ```
 
-remains attached to the caller's shell/terminal. Ctrl+C cancels all source subscriptions and callback work in the invocation.
+remains attached to the caller's shell/terminal. Ctrl+C cancels every source subscription and callback in the invocation.
 
 Detached:
 
 ```sh
 logmash \
-  west:events \
-  east:events \
+  us:west:events \
+  us:east:events \
   --detached \
   --into axiom eu mydataset
 ```
 
-creates one supervised Logmash process containing all of those source subscriptions. If one source fails unexpectedly, the invocation cancels its sibling source subscriptions instead of silently leaving a partial fan-in running.
+creates one supervised Logmash process containing all source subscriptions. If one source fails unexpectedly, sibling source subscriptions are cancelled instead of leaving a partial fan-in running.
 
 ## Session supervision
 
-Logmash keeps lightweight local process-bound supervision state, not durable Logma graph state:
+Logmash keeps lightweight local process-bound supervision state:
 
 ```sh
 logmash list
 logmash stop <session-id>
 ```
 
-A multi-source session records source-qualified channel/pattern selectors, its callback descriptors, and the source profiles participating in that process. Example shape:
+Example shape:
 
 ```text
-4c1d8eaa9321 pid=4127 profiles=east.logma.sh,west.logma.sh sources=2
-  channels: east:events, west:events, west:ratelimiters
+4c1d8eaa9321 pid=4127 profiles=east.us.logma.sh,west.us.logma.sh sources=2
+  channels: us:east:events, us:west:events, us:west:ratelimiters
   callbacks: axiom:mydataset@axiom-eu-central-1.logma.sh
   auth: acl-env
 ```
@@ -214,7 +229,7 @@ acl-env
 auto-env
 ```
 
-Auth is resolved independently for each source profile, so `west.logma.sh` and `east.logma.sh` may have different DNS auth profiles while participating in one Logmash process. A CLI `--auth-provider` override applies to all source profiles in that invocation.
+Auth is resolved independently for each geographic source profile. If DNS does not specify an auth profile, `us:west` falls back to the local auth profile name `us-west`.
 
 ## Package boundaries
 
@@ -225,8 +240,8 @@ smoke
   exec
 
 logmash
-  SOURCE:CHANNEL grammar
-  multi-source fan-in
+  COUNTRY:REGION:CHANNEL grammar
+  geographic multi-source fan-in
   provider DNS resolution
   Redis subscription lifecycle
   callback composition
