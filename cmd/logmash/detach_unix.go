@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package logmash
 
 import (
 	"fmt"
@@ -35,7 +35,8 @@ func detach(args []string) (int, string, error) {
 	}
 	defer devNull.Close()
 
-	cmd := exec.Command(exe, args...)
+	childArgs := append([]string{"logmash"}, args...)
+	cmd := exec.Command(exe, childArgs...)
 	cmd.Env = append(os.Environ(), "LOGMASH_DETACHED=1")
 	cmd.Stdin = devNull
 	cmd.Stdout = devNull
