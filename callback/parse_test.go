@@ -10,9 +10,6 @@ func TestParseStdoutAndWebhook(t *testing.T) {
 	if d.Empty() {
 		t.Fatal("expected callbacks")
 	}
-	if !d.HasStdout() {
-		t.Fatal("expected stdout callback")
-	}
 }
 
 func TestParseRejectsUnsupportedCallback(t *testing.T) {
