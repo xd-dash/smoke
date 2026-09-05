@@ -9,11 +9,11 @@ import (
 
 func TestParseArgsSourceQualified(t *testing.T) {
 	got, err := parseArgs([]string{
-		"west:events",
-		"west:ratelimiters",
-		"east:events",
-		"west:ratelimiters",
-		"--pattern", "east:worker:*",
+		"us:west:events",
+		"us:west:ratelimiters",
+		"us:east:events",
+		"us:west:ratelimiters",
+		"--pattern", "us:east:worker:*",
 		"--into", "axiom", "east", "redis-events",
 		"--into", "axiom", "eu", "redis-events",
 		"--callback-policy", "fail-fast",
@@ -24,11 +24,11 @@ func TestParseArgsSourceQualified(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSources := []sourceSelector{
-		{Profile: "west", Value: "events"},
-		{Profile: "west", Value: "ratelimiters"},
-		{Profile: "east", Value: "events"},
-		{Profile: "west", Value: "ratelimiters"},
-		{Profile: "east", Value: "worker:*", Pattern: true},
+		{Country: "us", Region: "west", Value: "events"},
+		{Country: "us", Region: "west", Value: "ratelimiters"},
+		{Country: "us", Region: "east", Value: "events"},
+		{Country: "us", Region: "west", Value: "ratelimiters"},
+		{Country: "us", Region: "east", Value: "worker:*", Pattern: true},
 	}
 	if !reflect.DeepEqual(got.Sources, wantSources) {
 		t.Fatalf("sources = %#v", got.Sources)
@@ -52,26 +52,37 @@ func TestParseArgsSourceQualified(t *testing.T) {
 }
 
 func TestParseSourceSelector(t *testing.T) {
-	got, err := parseSourceSelector("west:events", false)
+	got, err := parseSourceSelector("US:West:events", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Profile != "west" || got.Value != "events" || got.Pattern {
+	if got.Country != "us" || got.Region != "west" || got.Value != "events" || got.Pattern {
 		t.Fatalf("selector = %#v", got)
 	}
 
-	pattern, err := parseSourceSelector("east:worker:*", true)
+	pattern, err := parseSourceSelector("us:east:worker:*", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pattern.Profile != "east" || pattern.Value != "worker:*" || !pattern.Pattern {
+	if pattern.Country != "us" || pattern.Region != "east" || pattern.Value != "worker:*" || !pattern.Pattern {
 		t.Fatalf("pattern = %#v", pattern)
 	}
 }
 
-func TestSourceSelectorRequiresRelationship(t *testing.T) {
-	if _, err := parseArgs([]string{"west", "events"}); err == nil {
-		t.Fatal("expected unqualified source/channel grammar to fail")
+func TestSourceSelectorRequiresCountryRegionRelationship(t *testing.T) {
+	for _, args := range [][]string{{"west:events"}, {"usa:west:events"}, {"us", "west", "events"}} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("expected invalid grammar for %#v", args)
+		}
+	}
+}
+
+func TestSourceProfileHierarchy(t *testing.T) {
+	if got := sourceProfile("us", "west"); got != "west.us.logma.sh" {
+		t.Fatalf("sourceProfile = %q", got)
+	}
+	if got := logicalSource("US", "West"); got != "us:west" {
+		t.Fatalf("logicalSource = %q", got)
 	}
 }
 
@@ -95,7 +106,7 @@ func TestResolveIntoAxiomAliases(t *testing.T) {
 }
 
 func TestForegroundNeedsNoDestination(t *testing.T) {
-	got, err := parseArgs([]string{"west:events"})
+	got, err := parseArgs([]string{"us:west:events"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,23 +116,14 @@ func TestForegroundNeedsNoDestination(t *testing.T) {
 }
 
 func TestDetachedRequiresDestination(t *testing.T) {
-	if _, err := parseArgs([]string{"west:events", "--detached"}); err == nil {
+	if _, err := parseArgs([]string{"us:west:events", "--detached"}); err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestNormalizeProfile(t *testing.T) {
-	if got := normalizeProfile("west"); got != "west.logma.sh" {
-		t.Fatalf("normalizeProfile = %q", got)
-	}
-	if got := normalizeProfile("prod.us-west1.logma.sh"); got != "prod.us-west1.logma.sh" {
-		t.Fatalf("normalizeProfile fqdn = %q", got)
 	}
 }
 
 func TestLegacyNoStdoutAliasesDetached(t *testing.T) {
 	got, err := parseArgs([]string{
-		"west:events", "--no-stdout",
+		"us:west:events", "--no-stdout",
 		"--callback", "https://example.com/hook",
 	})
 	if err != nil {
