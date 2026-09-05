@@ -22,3 +22,11 @@ func stopProcess(pid int) error {
 	}
 	return process.Signal(syscall.SIGTERM)
 }
+
+func detachOutputProcess(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(syscall.SIGUSR1)
+}
