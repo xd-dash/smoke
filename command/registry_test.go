@@ -1,39 +1,37 @@
 package command
 
 import (
-	"context"
-	"os"
-	"path/filepath"
+	"fmt"
+	"reflect"
 	"testing"
 )
 
-func TestExplicitCommandRegistrationWins(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, executableName("logmash"))
-	if err := os.WriteFile(path, []byte("test"), 0o755); err != nil {
+func TestRegisterAndRunCompiledCommand(t *testing.T) {
+	name := "test-compiled-command"
+	Register(name, func(args []string) error {
+		if !reflect.DeepEqual(args, []string{"one", "two"}) {
+			return fmt.Errorf("args = %#v", args)
+		}
+		return nil
+	})
+	if err := Run(name, []string{"one", "two"}); err != nil {
 		t.Fatal(err)
-	}
-	t.Setenv("SMOKE_COMMAND_LOGMASH", path)
-
-	registry, err := New(Command{Name: "logmash"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := registry.Resolve(context.Background(), "logmash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != path {
-		t.Fatalf("Resolve() = %q, want %q", got, path)
 	}
 }
 
-func TestUnknownCommandRejected(t *testing.T) {
-	registry, err := New(Command{Name: "logmash"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.Resolve(context.Background(), "other"); err == nil {
+func TestUnknownCompiledCommandRejected(t *testing.T) {
+	if err := Run("definitely-not-compiled", nil); err == nil {
 		t.Fatal("expected unregistered command error")
 	}
+}
+
+func TestNamesContainsRegisteredCommand(t *testing.T) {
+	name := "test-listed-command"
+	Register(name, func([]string) error { return nil })
+	for _, got := range Names() {
+		if got == name {
+			return
+		}
+	}
+	t.Fatalf("Names() does not contain %q: %#v", name, Names())
 }
