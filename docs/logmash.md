@@ -35,59 +35,82 @@ smoke logmash \
 
 Callback failure is non-fatal by default. Use `--callback-policy fail-fast` when callback delivery is itself the required operation.
 
-## Process and callback lifecycle
+## Attached and unattended lifecycle
 
-Background runtime is the default. The first Smoke invocation starts another process from the same Smoke executable and then returns the shell prompt. The child is placed in a new OS session on Unix, but it inherits the launcher's stdout/stderr descriptors.
+Stdout is included by default. When stdout is present, Logmash stays attached to the shell:
 
 ```text
-Smoke launcher
-   └── same Smoke executable
-         └── Logmash runtime
-               └── callbacks
-                     ├── stdout
-                     ├── Axiom
-                     └── webhook
+Redis ──┬──> stdout
+        ├──> Axiom
+        └──> webhook
+
+output is visible
+shell waits
+Ctrl+C stops the composition
 ```
 
-Process detachment and stdout detachment are separate. Stdout remains an ordinary callback until explicitly removed or until its inherited descriptor fails.
+Attached does not mean interactive. Logmash does not require stdin; it simply writes output while the shell waits for the runtime to finish.
 
-List runtimes:
+A normal invocation is therefore attached:
+
+```sh
+smoke logmash us:west:events --into axiom east mydataset
+```
+
+To run only non-terminal callbacks, remove stdout:
+
+```sh
+smoke logmash \
+  us:west:events \
+  --no-stdout \
+  --into axiom east mydataset
+```
+
+Without stdout, Logmash is unattended by default. Smoke starts another process from the same executable and returns the shell prompt. On Unix that child starts in a new OS session.
+
+```text
+Redis ──> Axiom
+
+shell returns
+runtime continues
+```
+
+Only unattended runtimes are registered for later process control:
 
 ```sh
 smoke logmash list
-```
-
-Detach only stdout on Unix:
-
-```sh
-smoke logmash detach <session-id>
-```
-
-This sends `SIGUSR1`. The running Logmash process atomically removes `stdout` from its callback snapshot. Redis subscriptions and all other callbacks continue.
-
-Stop the entire runtime:
-
-```sh
 smoke logmash stop <session-id>
 ```
 
-This sends `SIGTERM`, cancels the root context, and lets Logmash shut down subscriptions and callbacks before process exit.
+`stop` sends `SIGTERM` on Unix, cancels the root context, and lets Logmash shut down subscriptions and callbacks before process exit.
 
-For explicit foreground ownership:
+For debugging, a no-stdout runtime can still be kept attached explicitly:
 
 ```sh
-smoke logmash --foreground us:west:events
+smoke logmash \
+  us:west:events \
+  --no-stdout \
+  --attached \
+  --into axiom east mydataset
 ```
 
-`--no-stdout` starts without the stdout callback. `--detached` remains accepted for compatibility but background launch is already the default.
+The lifecycle primitive is intentionally only:
 
-There is no output socket, tail process, persisted stdout log, or resident Smoke daemon in this model.
+```text
+stdout present
+    -> attached
+    -> output visible
+    -> shell waits
+    -> Ctrl+C stops it
 
-## Lockless callback membership
+stdout absent
+    -> unattended
+    -> shell returns
+    -> callbacks continue
+    -> stop later by session ID
+```
 
-The dispatcher holds callback membership as an immutable atomic snapshot. `detach` replaces that snapshot without a mutex. An in-flight dispatch may finish against its existing snapshot; subsequent messages observe stdout as removed.
-
-If stdout delivery itself fails under the default `continue` policy, stdout is removed automatically and the remaining callbacks continue.
+There is no output reattachment operation, `SIGUSR1`, output socket, persisted stdout log, `tail`, `nohup`, or resident Smoke daemon.
 
 ## Authentication profiles
 
@@ -112,4 +135,4 @@ sub := redisprovider.Subscription{
 return redisprovider.New().RunSubscription(ctx, sub, dispatcher)
 ```
 
-Logmash owns its subscription and callback supervision. Smoke owns composition and the small OS-process control surface around the runtime.
+Logmash owns subscription and callback supervision. Smoke owns composition and the small OS-process start/list/stop boundary used only for unattended runtimes.
