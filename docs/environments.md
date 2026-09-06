@@ -95,6 +95,8 @@ smoke env tool list infra
 
 The tool dependency is fetched and versioned by Go. It is not installed into `$GOBIN` merely because it belongs to the environment.
 
+Environment mutations are serialized. A running environment-backed command holds a shared environment lock while `create`, `use`, `drop`, and tool mutations require an exclusive lock. This prevents a command from observing a partially changed workspace. The tradeoff is that a long-lived environment shell/runtime can delay mutation of that environment.
+
 ## Running in an environment
 
 Run an arbitrary process with the environment's `GOWORK` and `SMOKE_ENV` values:
@@ -134,23 +136,24 @@ or from a project directory:
 smoke env run infra --dir ~/src/agni -- logmash us:west:events
 ```
 
-This path does **not** discover or start a separate `logmash` executable. Smoke activates the environment and dispatches `logmash` through the same in-process command registry used by a normal `smoke logmash ...` invocation.
+`env run` does not mutate the parent Smoke process's working directory or environment. It starts Smoke itself as a child with `GOWORK` and `SMOKE_ENV` set, and that child dispatches `logmash` through the ordinary compiled-in command registry.
 
-That preserves the existing composition boundary:
+This still does **not** discover or start a separate `logmash` executable and does not use PATH-based command discovery.
 
 ```text
-local Smoke binary
+parent Smoke
     │
-    ├── compiled-in command registry
-    │       └── logmash
-    │
-    └── selected Smoke environment
-            ├── go.work
-            ├── project modules
-            └── tools/go.mod
+    └── child Smoke with selected environment
+            │
+            ├── compiled-in command registry
+            │       └── logmash
+            │
+            └── GOWORK / SMOKE_ENV
 ```
 
-An unattended Logmash run still re-execs the exact same Smoke executable. The child inherits `GOWORK` and `SMOKE_ENV`, so background lifetime does not create a second environment model.
+An unattended Logmash runtime may re-exec Smoke again to cross the attached/unattended process-lifetime boundary. Environment variables are inherited, so background lifetime does not create a separate environment model.
+
+Atomic recomposition replaces the installed Smoke filesystem entry, while already-running Smoke processes keep their existing image. Therefore a child spawn racing with a completed recomposition may start the newly installed composition. The guarantee is that Smoke re-execs Smoke itself, not that it always reproduces the exact parent process image.
 
 ## Composition versus environment
 
@@ -164,6 +167,6 @@ smoke env
     = which Go workspace/modules/tools are active while Smoke is used
 ```
 
-For example, an installed Smoke composition may include Logmash, while `infra` and `dev` environments expose different project modules and different Go tools. An environment cannot make a command available if that command was not compiled into the current Smoke executable.
+For example, an installed Smoke composition may include Logmash, while `infra` and `dev` environments expose different project modules and different Go tools. An environment cannot make a command available if that command was not compiled into the Smoke executable it starts.
 
 This preserves import-time composition and keeps workspace selection out of the provider/runtime transport layer.
