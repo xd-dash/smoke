@@ -207,26 +207,23 @@ func runEnvTool(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		lock, err := environment.AcquireShared(ctx, env)
+		workspace, err := environment.Snapshot(ctx, env)
 		if err != nil {
 			return err
 		}
-		defer lock.Close()
 		goBin, err := exec.LookPath("go")
 		if err != nil {
 			return err
 		}
-		cmd := environment.Command(ctx, env, env.ToolsDir, goBin, "tool")
+		cmd := workspace.Command(ctx, workspace.ToolsDir, goBin, "tool")
 		return runCommand(cmd)
 	default:
 		return fmt.Errorf("unknown env tool operation %q", args[0])
 	}
 }
 
-// runSmokeInEnv re-execs the exact Smoke executable under the selected
-// workspace rather than mutating process-global GOWORK or cwd. Normal Smoke
-// command dispatch remains in-process in the child. This small process boundary
-// makes environment selection race-free for embedding and concurrent callers.
+// runSmokeInEnv re-execs Smoke under an immutable workspace snapshot rather
+// than holding the canonical environment lock for the command lifetime.
 func runSmokeInEnv(ctx context.Context, args []string) error {
 	name, dir, rest, err := parseEnvInvocation(args)
 	if err != nil {
@@ -235,20 +232,15 @@ func runSmokeInEnv(ctx context.Context, args []string) error {
 	if !compiledCommand(rest[0]) {
 		return fmt.Errorf("command %q is not compiled into this smoke", rest[0])
 	}
-	env, err := environment.Require(name)
+	workspace, err := snapshotEnvironment(ctx, name)
 	if err != nil {
 		return err
 	}
-	lock, err := environment.AcquireShared(ctx, env)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cmd := environment.Command(ctx, env, dir, exe, rest...)
+	cmd := workspace.Command(ctx, dir, exe, rest...)
 	return runCommand(cmd)
 }
 
@@ -266,16 +258,11 @@ func execInEnv(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("usage: smoke env exec <name> [--dir <path>] -- <program> [args ...]")
 	}
-	env, err := environment.Require(name)
+	workspace, err := snapshotEnvironment(ctx, name)
 	if err != nil {
 		return err
 	}
-	lock, err := environment.AcquireShared(ctx, env)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	cmd := environment.Command(ctx, env, dir, rest[0], rest[1:]...)
+	cmd := workspace.Command(ctx, dir, rest[0], rest[1:]...)
 	return runCommand(cmd)
 }
 
@@ -283,16 +270,11 @@ func shellInEnv(ctx context.Context, args []string) error {
 	if len(args) < 1 || len(args) > 2 {
 		return fmt.Errorf("usage: smoke env shell <name> [dir]")
 	}
-	env, err := environment.Require(args[0])
+	workspace, err := snapshotEnvironment(ctx, args[0])
 	if err != nil {
 		return err
 	}
-	lock, err := environment.AcquireShared(ctx, env)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	dir := env.Dir
+	dir := workspace.Environment.Dir
 	if len(args) == 2 {
 		dir, err = filepath.Abs(args[1])
 		if err != nil {
@@ -310,7 +292,7 @@ func shellInEnv(ctx context.Context, args []string) error {
 			shell = "/bin/sh"
 		}
 	}
-	cmd := environment.Command(ctx, env, dir, shell)
+	cmd := workspace.Command(ctx, dir, shell)
 	return runCommand(cmd)
 }
 
@@ -328,22 +310,25 @@ func buildInEnv(ctx context.Context, args []string) error {
 	if len(rest) > 0 && rest[0] == "--" {
 		rest = rest[1:]
 	}
-	env, err := environment.Require(name)
+	workspace, err := snapshotEnvironment(ctx, name)
 	if err != nil {
 		return err
 	}
-	lock, err := environment.AcquireShared(ctx, env)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return fmt.Errorf("Smoke environments require a preinstalled Go toolchain: %w", err)
 	}
 	buildArgs := append([]string{"build"}, rest...)
-	cmd := environment.Command(ctx, env, dir, goBin, buildArgs...)
+	cmd := workspace.Command(ctx, dir, goBin, buildArgs...)
 	return runCommand(cmd)
+}
+
+func snapshotEnvironment(ctx context.Context, name string) (environment.Workspace, error) {
+	env, err := environment.Require(name)
+	if err != nil {
+		return environment.Workspace{}, err
+	}
+	return environment.Snapshot(ctx, env)
 }
 
 func parseEnvInvocation(args []string) (name, dir string, rest []string, err error) {
