@@ -62,12 +62,24 @@ func Save(manifest Manifest) error {
 		return err
 	}
 	data = append(data, '\n')
-	tmp := path + fmt.Sprintf(".tmp-%d", os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".composition-manifest-*.tmp")
+	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	if err := os.Rename(tmp, path); err != nil {
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace composition manifest: %w", err)
 	}
 	return nil
@@ -95,7 +107,7 @@ func WithRemoved(manifest Manifest, importPath string) Manifest {
 // compose operations from both reading an old manifest and silently losing one
 // writer's change.
 func Update(ctx context.Context, transform func(Manifest) Manifest) (string, error) {
-	lock, err := acquire(ctx)
+	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
 		return "", err
 	}
@@ -110,7 +122,7 @@ func Update(ctx context.Context, transform func(Manifest) Manifest) (string, err
 // Rebuild rebuilds the current desired composition under the same lock used by
 // mutation, so a rebuild cannot overwrite a concurrent add/remove with stale state.
 func Rebuild(ctx context.Context) (string, error) {
-	lock, err := acquire(ctx)
+	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
 		return "", err
 	}
@@ -125,12 +137,19 @@ func Rebuild(ctx context.Context) (string, error) {
 // Apply replaces the installed executable with exactly manifest. Prefer Update
 // for read-modify-write operations.
 func Apply(ctx context.Context, manifest Manifest) (string, error) {
-	lock, err := acquire(ctx)
+	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
 		return "", err
 	}
 	defer lock.Close()
 	return applyLocked(ctx, manifest)
+}
+
+// AcquireSpawnLock prevents composition replacement while a process is resolving
+// and starting the currently installed Smoke executable. Callers should release
+// it immediately after cmd.Start succeeds; it is not a lifetime lock.
+func AcquireSpawnLock(ctx context.Context) (*filelock.Lock, error) {
+	return acquire(ctx, filelock.Shared)
 }
 
 func applyLocked(ctx context.Context, manifest Manifest) (result string, retErr error) {
@@ -243,13 +262,31 @@ func restoreComposition(snapshots []fileSnapshot) error {
 			}
 			continue
 		}
-		tmp := snapshot.path + fmt.Sprintf(".restore-%d", os.Getpid())
-		if err := os.WriteFile(tmp, snapshot.data, 0o600); err != nil {
+		tmp, err := os.CreateTemp(filepath.Dir(snapshot.path), ".composition-restore-*.tmp")
+		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if err := os.Rename(tmp, snapshot.path); err != nil {
-			_ = os.Remove(tmp)
+		tmpPath := tmp.Name()
+		if err := tmp.Chmod(0o600); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if _, err := tmp.Write(snapshot.data); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Rename(tmpPath, snapshot.path); err != nil {
+			_ = os.Remove(tmpPath)
 			errs = append(errs, err)
 		}
 	}
@@ -278,12 +315,12 @@ func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
 	return nil
 }
 
-func acquire(ctx context.Context) (*filelock.Lock, error) {
+func acquire(ctx context.Context, mode filelock.Mode) (*filelock.Lock, error) {
 	dir, err := compositionDir()
 	if err != nil {
 		return nil, err
 	}
-	return filelock.Acquire(ctx, filepath.Join(dir, ".composition.lock"), filelock.Exclusive)
+	return filelock.Acquire(ctx, filepath.Join(dir, ".composition.lock"), mode)
 }
 
 func snapshotManifest() (string, []byte, bool, error) {
@@ -312,12 +349,24 @@ func restoreManifest(path string, data []byte, existed bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp := path + fmt.Sprintf(".rollback-%d", os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".composition-rollback-*.tmp")
+	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	return os.Rename(tmp, path)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
