@@ -3,6 +3,7 @@ package selfbuild
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,12 @@ const DefaultLogmash = "github.com/xd-dash/smoke/cmd/logmash"
 
 type Manifest struct {
 	Components []string `json:"components"`
+}
+
+type fileSnapshot struct {
+	path   string
+	data   []byte
+	exists bool
 }
 
 func Load() (Manifest, error) {
@@ -126,7 +133,7 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	return applyLocked(ctx, manifest)
 }
 
-func applyLocked(ctx context.Context, manifest Manifest) (string, error) {
+func applyLocked(ctx context.Context, manifest Manifest) (result string, retErr error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return "", fmt.Errorf("Smoke recomposition requires a preinstalled Go toolchain: %w", err)
@@ -140,6 +147,24 @@ func applyLocked(ctx context.Context, manifest Manifest) (string, error) {
 	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
 		return "", err
 	}
+
+	// go mod tidy and go build are allowed to mutate the generated composition
+	// module. Snapshot it so a failed composition cannot leak dependency/version
+	// changes into a later rebuild.
+	snapshots, err := snapshotComposition(sourceDir)
+	if err != nil {
+		return "", err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if restoreErr := restoreComposition(snapshots); restoreErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("restore composition source state: %w", restoreErr))
+		}
+	}()
+
 	if err := os.WriteFile(filepath.Join(sourceDir, "main.go"), []byte(renderMain(manifest)), 0o600); err != nil {
 		return "", err
 	}
@@ -184,7 +209,51 @@ func applyLocked(ctx context.Context, manifest Manifest) (string, error) {
 		}
 		return "", fmt.Errorf("replace %s: %w", target, err)
 	}
+	committed = true
 	return target, nil
+}
+
+func snapshotComposition(dir string) ([]fileSnapshot, error) {
+	paths := []string{
+		filepath.Join(dir, "main.go"),
+		filepath.Join(dir, "go.mod"),
+		filepath.Join(dir, "go.sum"),
+	}
+	out := make([]fileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			out = append(out, fileSnapshot{path: path})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", path, err)
+		}
+		out = append(out, fileSnapshot{path: path, data: data, exists: true})
+	}
+	return out, nil
+}
+
+func restoreComposition(snapshots []fileSnapshot) error {
+	var errs []error
+	for _, snapshot := range snapshots {
+		if !snapshot.exists {
+			if err := os.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		tmp := snapshot.path + fmt.Sprintf(".restore-%d", os.Getpid())
+		if err := os.WriteFile(tmp, snapshot.data, 0o600); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Rename(tmp, snapshot.path); err != nil {
+			_ = os.Remove(tmp)
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
@@ -254,6 +323,8 @@ func restoreManifest(path string, data []byte, existed bool) error {
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, goBin, args...)
 	cmd.Dir = dir
+	// Recomposition is its own module operation. Never let an active Smoke
+	// environment's GOWORK alter dependency selection for the Smoke binary.
 	cmd.Env = withEnv(os.Environ(), "GOWORK", "off")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
