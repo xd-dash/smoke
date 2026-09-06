@@ -13,8 +13,8 @@ import (
 )
 
 // Info describes the logical composition of the currently running Smoke binary.
-// Components self-register during package initialization, so this identity is
-// owned by the running process rather than the mutable composition manifest.
+// The composition entrypoint installs the component list before command dispatch,
+// so this identity belongs to the running binary rather than mutable manifest state.
 type Info struct {
 	Digest     string
 	Executable string
@@ -24,30 +24,27 @@ type Info struct {
 
 var state = struct {
 	sync.RWMutex
-	components map[string]struct{}
-}{components: map[string]struct{}{}}
+	set        bool
+	components []string
+}{}
 
-// RegisterComponent records one optional package as part of the running Smoke
-// composition. Optional component packages should call this from init().
-func RegisterComponent(importPath string) {
-	importPath = strings.TrimSpace(importPath)
-	if importPath == "" || strings.ContainsAny(importPath, " \t\r\n") {
-		panic(fmt.Sprintf("smoke identity: invalid component %q", importPath))
-	}
+// SetComponents installs the normalized component list embedded into this Smoke
+// entrypoint. It may be called once; a second call is a programmer error.
+func SetComponents(components ...string) {
+	normalized := normalize(components)
 	state.Lock()
-	state.components[importPath] = struct{}{}
-	state.Unlock()
+	defer state.Unlock()
+	if state.set {
+		panic("smoke identity: composition already set")
+	}
+	state.set = true
+	state.components = normalized
 }
 
 func Components() []string {
 	state.RLock()
 	defer state.RUnlock()
-	out := make([]string, 0, len(state.components))
-	for component := range state.components {
-		out = append(out, component)
-	}
-	sort.Strings(out)
-	return out
+	return append([]string(nil), state.components...)
 }
 
 func CompositionDigest() string {
@@ -74,13 +71,41 @@ func Current() Info {
 	}
 }
 
+// Environment returns the named canonical environment inherited by this process.
+func Environment() string {
+	return strings.TrimSpace(os.Getenv("SMOKE_ENV"))
+}
+
+// Workspace returns the exact immutable go.work snapshot inherited by an
+// environment-backed runtime. Empty means this process is not snapshot-backed.
+func Workspace() string {
+	return strings.TrimSpace(os.Getenv("SMOKE_ENV_WORKSPACE"))
+}
+
 // WorkspaceDigest returns the content-addressed workspace identity inherited by
 // an environment-backed runtime. Empty means this process is not running from a
 // Smoke environment snapshot.
 func WorkspaceDigest() string {
-	work := strings.TrimSpace(os.Getenv("SMOKE_ENV_WORKSPACE"))
+	work := Workspace()
 	if work == "" {
 		return ""
 	}
 	return filepath.Base(filepath.Dir(work))
+}
+
+func normalize(values []string) []string {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.ContainsAny(value, " \t\r\n") {
+			panic(fmt.Sprintf("smoke identity: invalid component %q", value))
+		}
+		set[value] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
