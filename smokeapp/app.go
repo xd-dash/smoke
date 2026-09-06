@@ -154,6 +154,11 @@ func runEnv(args []string) error {
 		if err != nil {
 			return err
 		}
+		lock, err := environment.AcquireShared(ctx, env)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
 		work, err := os.ReadFile(env.WorkFile)
 		if err != nil {
 			return err
@@ -212,6 +217,11 @@ func runEnvTool(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		lock, err := environment.AcquireShared(ctx, env)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
 		goBin, err := exec.LookPath("go")
 		if err != nil {
 			return err
@@ -223,44 +233,42 @@ func runEnvTool(ctx context.Context, args []string) error {
 	}
 }
 
-// runSmokeInEnv runs another compiled-in Smoke command in-process under the
-// selected workspace. This keeps Logmash and every other optional command on
-// the same command registry/composition path. An unattended Logmash child also
-// inherits GOWORK and SMOKE_ENV through os.Environ.
+// runSmokeInEnv re-execs the exact Smoke executable under the selected
+// workspace rather than mutating process-global GOWORK or cwd. Normal Smoke
+// command dispatch remains in-process in the child. This small process boundary
+// makes environment selection race-free for embedding and concurrent callers.
 func runSmokeInEnv(ctx context.Context, args []string) error {
 	name, dir, rest, err := parseEnvInvocation(args)
 	if err != nil {
 		return fmt.Errorf("usage: smoke env run <name> [--dir <path>] -- <smoke-command> [args ...]")
 	}
+	if !compiledCommand(rest[0]) {
+		return fmt.Errorf("command %q is not compiled into this smoke", rest[0])
+	}
 	env, err := environment.Require(name)
 	if err != nil {
 		return err
 	}
-	restoreEnv, err := environment.Activate(env)
+	lock, err := environment.AcquireShared(ctx, env)
 	if err != nil {
 		return err
 	}
-	defer restoreEnv()
-	if dir != "" {
-		dir, err = filepath.Abs(dir)
-		if err != nil {
-			return err
-		}
-		old, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		if err := os.Chdir(dir); err != nil {
-			return err
-		}
-		defer os.Chdir(old)
+	defer lock.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		return err
 	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return Run(rest)
+	cmd := environment.Command(ctx, env, dir, exe, rest...)
+	return runCommand(cmd)
+}
+
+func compiledCommand(name string) bool {
+	for _, candidate := range command.Names() {
+		if candidate == name {
+			return true
+		}
 	}
+	return false
 }
 
 func execInEnv(ctx context.Context, args []string) error {
@@ -272,6 +280,11 @@ func execInEnv(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := environment.AcquireShared(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	cmd := environment.Command(ctx, env, dir, rest[0], rest[1:]...)
 	return runCommand(cmd)
 }
@@ -284,6 +297,11 @@ func shellInEnv(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := environment.AcquireShared(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	dir := env.Dir
 	if len(args) == 2 {
 		dir, err = filepath.Abs(args[1])
@@ -324,6 +342,11 @@ func buildInEnv(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := environment.AcquireShared(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return fmt.Errorf("Smoke environments require a preinstalled Go toolchain: %w", err)
