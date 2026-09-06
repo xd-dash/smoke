@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+type Mode int
+
+const (
+	Shared Mode = iota
+	Exclusive
+)
+
 // Lock is an advisory cross-process file lock. The underlying file remains on
 // disk, while ownership is tied to the open file descriptor/handle so a crash
 // releases the lock automatically.
@@ -15,8 +22,8 @@ type Lock struct {
 	file *os.File
 }
 
-// Acquire waits until path can be locked exclusively or ctx is canceled.
-func Acquire(ctx context.Context, path string) (*Lock, error) {
+// Acquire waits until path can be locked in the requested mode or ctx is canceled.
+func Acquire(ctx context.Context, path string, mode Mode) (*Lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -25,7 +32,7 @@ func Acquire(ctx context.Context, path string) (*Lock, error) {
 		return nil, err
 	}
 	for {
-		locked, err := tryLock(file)
+		locked, err := tryLock(file, mode)
 		if err != nil {
 			_ = file.Close()
 			return nil, fmt.Errorf("lock %s: %w", path, err)
