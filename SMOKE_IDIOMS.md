@@ -44,7 +44,7 @@ Core packages must not import every optional provider merely to make them discov
 
 A Smoke environment is a named Go workspace. It is first-class Smoke tooling, not a runtime provider.
 
-The canonical Go-side representation is:
+The canonical Go-side representation is mutable environment state:
 
 ```text
 <env>/
@@ -56,7 +56,7 @@ The canonical Go-side representation is:
 
 Rules:
 
-- `go.work` is the environment/workspace manifest.
+- `go.work` is the canonical environment/workspace manifest.
 - `tools/go.mod` exists to carry environment-scoped Go `tool` directives and their ordinary module requirements.
 - Do not mirror Go tool dependencies into a Smoke JSON/YAML dependency graph.
 - Use normal Go commands to mutate workspace/tool state so Go remains authoritative for version selection, sums, replacements, exclusions, and tool resolution.
@@ -66,8 +66,33 @@ Rules:
 - `smoke env build` is a thin `go build` invocation under the selected workspace. Smoke must not invent a second build graph over `go.work`.
 - Workspace `use` targets are local Go module directories containing `go.mod`.
 - The environment tools module is always part of the workspace so its declared tools are visible to `go tool` in workspace mode.
-- Environment mutation (`create`, `use`, `drop`, tool add/remove) takes an exclusive cross-process environment lock. Commands that consume the environment take a shared lock, preventing partially observed `go.work`/tools-module edits.
-- The current shared-lock model intentionally means a long-lived `env shell`, `env exec`, `env build`, or `env run` can delay environment mutation. Do not remove those locks merely for convenience. If long-lived live environments must remain mutable, first introduce a session-specific workspace/tools snapshot and then relax the lifetime lock against that immutable snapshot.
+- Canonical environment mutation (`create`, `use`, `drop`, tool add/remove) takes an exclusive cross-process environment lock.
+- Long-lived consumers (`shell`, `exec`, `build`, `run`, and tool listing) must not hold that canonical lock for their lifetime. They first take a short shared lock, snapshot one coherent environment state, release the lock, and then run against that immutable snapshot.
+- A runtime snapshot includes `go.work` plus the environment tools module manifests (`tools/go.mod` and `tools/go.sum` when present). Snapshotting only `go.work` is insufficient because a canonical tool mutation would otherwise change the running workspace's tool graph underneath it.
+- Snapshot `go.work` preserves Go/toolchain/godebug/use/replace semantics. Local project paths are normalized so the snapshot is independent of the canonical `go.work` location; the tools `use` entry points at the copied snapshot-local `./tools` module.
+- Runtime snapshots are content-addressed cache state. Equal canonical state must reuse the same digest/path; changed canonical state must create a new immutable digest/path without modifying older snapshots.
+- Do not delete a runtime snapshot merely because the launching `env run` process exits. Unattended Logmash descendants inherit the snapshot `GOWORK`, so the snapshot must outlive the launcher. Any future garbage collection must prove that a snapshot is no longer referenced, or use a conservative cache-retention policy.
+- `SMOKE_ENV_WORKSPACE` identifies the exact runtime snapshot path and is inherited along with `GOWORK`/`SMOKE_ENV`.
+
+The intended ownership model is:
+
+```text
+mutable canonical environment
+        │
+        │ short shared lock
+        ▼
+immutable content-addressed snapshot
+        │
+        ├── release canonical lock
+        │
+        └── shell / exec / build / run
+
+canonical use/drop/tool mutation
+        │
+        └── exclusive lock only for mutation duration
+```
+
+A running command therefore keeps the environment state it started with, while a later mutation can proceed immediately and affects only later snapshots.
 
 Composition and environment are separate axes:
 
@@ -81,7 +106,7 @@ smoke env
 
 An environment cannot make an optional Smoke command available unless that command is already present in the current binary's import-time composition.
 
-Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the already-compiled Logmash handler in the child. It must not resolve, install, or launch a separate `logmash` executable. Unattended Logmash children inherit `GOWORK`/`SMOKE_ENV`.
+Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the already-compiled Logmash handler in the child. It must not resolve, install, or launch a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot through `GOWORK`, `SMOKE_ENV`, and `SMOKE_ENV_WORKSPACE`.
 
 A running Smoke process and the installed Smoke filesystem entry are distinct after an atomic recomposition: the running process keeps its old image while the path may now name a newer composition. Therefore a re-exec concurrent with composition replacement may legitimately start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is added.
 
@@ -295,12 +320,13 @@ When modifying Smoke/Logmash:
 3. Prefer context cancellation and ownership over shared mutable state.
 4. Keep process-global cwd/environment mutation out of reusable execution paths.
 5. Serialize shared on-disk state transitions across processes, not merely goroutines.
-6. Keep stdout default and attached unless the caller explicitly removes stdout.
-7. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
-8. Keep DNS discovery free of credentials and runtime dataset/channel state.
-9. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, session, callback, registry, or rebuild invariants touched by the change.
-10. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require the normal `main` CI run after merge.
-11. Update `README.md` or focused docs for user-visible behavior changes.
-12. Update this idiom file when an architectural invariant changes, not for incidental implementation details.
+6. Prefer immutable runtime snapshots over holding canonical-state locks for long-lived work.
+7. Keep stdout default and attached unless the caller explicitly removes stdout.
+8. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+9. Keep DNS discovery free of credentials and runtime dataset/channel state.
+10. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, session, callback, registry, or rebuild invariants touched by the change.
+11. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require the normal `main` CI run after merge.
+12. Update `README.md` or focused docs for user-visible behavior changes.
+13. Update this idiom file when an architectural invariant changes, not for incidental implementation details.
 
-Before adding a new daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod` workspace machinery, attached/unattended lifetime, typed provider boundary, callback fan-out, or session start/list/stop primitives.
+Before adding a new daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod` workspace machinery, immutable environment snapshots, attached/unattended lifetime, typed provider boundary, callback fan-out, or session start/list/stop primitives.
