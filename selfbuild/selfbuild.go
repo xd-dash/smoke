@@ -3,6 +3,7 @@ package selfbuild
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,12 +12,20 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+
+	"github.com/xd-dash/smoke/internal/filelock"
 )
 
 const DefaultLogmash = "github.com/xd-dash/smoke/cmd/logmash"
 
 type Manifest struct {
 	Components []string `json:"components"`
+}
+
+type fileSnapshot struct {
+	path   string
+	data   []byte
+	exists bool
 }
 
 func Load() (Manifest, error) {
@@ -53,12 +62,24 @@ func Save(manifest Manifest) error {
 		return err
 	}
 	data = append(data, '\n')
-	tmp := path + fmt.Sprintf(".tmp-%d", os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".composition-manifest-*.tmp")
+	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	if err := os.Rename(tmp, path); err != nil {
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace composition manifest: %w", err)
 	}
 	return nil
@@ -82,12 +103,56 @@ func WithRemoved(manifest Manifest, importPath string) Manifest {
 	return manifest
 }
 
-// Apply builds the requested composition first. Only after the Go build
-// succeeds does it persist the manifest and atomically replace the current
-// Smoke executable. If executable replacement fails after the manifest write,
-// the previous manifest bytes are restored so desired state does not advance
-// past the executable that is still installed.
+// Update performs a locked read-modify-rebuild transaction. It prevents two
+// compose operations from both reading an old manifest and silently losing one
+// writer's change.
+func Update(ctx context.Context, transform func(Manifest) Manifest) (string, error) {
+	lock, err := acquire(ctx, filelock.Exclusive)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	manifest, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return applyLocked(ctx, transform(manifest))
+}
+
+// Rebuild rebuilds the current desired composition under the same lock used by
+// mutation, so a rebuild cannot overwrite a concurrent add/remove with stale state.
+func Rebuild(ctx context.Context) (string, error) {
+	lock, err := acquire(ctx, filelock.Exclusive)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	manifest, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return applyLocked(ctx, manifest)
+}
+
+// Apply replaces the installed executable with exactly manifest. Prefer Update
+// for read-modify-write operations.
 func Apply(ctx context.Context, manifest Manifest) (string, error) {
+	lock, err := acquire(ctx, filelock.Exclusive)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	return applyLocked(ctx, manifest)
+}
+
+// AcquireSpawnLock prevents composition replacement while a process is resolving
+// and starting the currently installed Smoke executable. Callers should release
+// it immediately after cmd.Start succeeds; it is not a lifetime lock.
+func AcquireSpawnLock(ctx context.Context) (*filelock.Lock, error) {
+	return acquire(ctx, filelock.Shared)
+}
+
+func applyLocked(ctx context.Context, manifest Manifest) (result string, retErr error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return "", fmt.Errorf("Smoke recomposition requires a preinstalled Go toolchain: %w", err)
@@ -101,13 +166,30 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
 		return "", err
 	}
+
+	// go mod tidy and go build are allowed to mutate the generated composition
+	// module. Snapshot it so a failed composition cannot leak dependency/version
+	// changes into a later rebuild.
+	snapshots, err := snapshotComposition(sourceDir)
+	if err != nil {
+		return "", err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if restoreErr := restoreComposition(snapshots); restoreErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("restore composition source state: %w", restoreErr))
+		}
+	}()
+
 	if err := os.WriteFile(filepath.Join(sourceDir, "main.go"), []byte(renderMain(manifest)), 0o600); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte(renderGoMod()), 0o600); err != nil {
+	if err := ensureGoMod(ctx, sourceDir, goBin); err != nil {
 		return "", err
 	}
-
 	if err := runGo(ctx, sourceDir, goBin, "mod", "tidy"); err != nil {
 		return "", err
 	}
@@ -146,7 +228,99 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 		}
 		return "", fmt.Errorf("replace %s: %w", target, err)
 	}
+	committed = true
 	return target, nil
+}
+
+func snapshotComposition(dir string) ([]fileSnapshot, error) {
+	paths := []string{
+		filepath.Join(dir, "main.go"),
+		filepath.Join(dir, "go.mod"),
+		filepath.Join(dir, "go.sum"),
+	}
+	out := make([]fileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			out = append(out, fileSnapshot{path: path})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", path, err)
+		}
+		out = append(out, fileSnapshot{path: path, data: data, exists: true})
+	}
+	return out, nil
+}
+
+func restoreComposition(snapshots []fileSnapshot) error {
+	var errs []error
+	for _, snapshot := range snapshots {
+		if !snapshot.exists {
+			if err := os.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(snapshot.path), ".composition-restore-*.tmp")
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		tmpPath := tmp.Name()
+		if err := tmp.Chmod(0o600); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if _, err := tmp.Write(snapshot.data); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Rename(tmpPath, snapshot.path); err != nil {
+			_ = os.Remove(tmpPath)
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
+	path := filepath.Join(sourceDir, "go.mod")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte(renderGoMod()), 0o600); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	// Keep the composition module identity current without discarding versions
+	// already selected for optional components.
+	if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-module=smoke.local/composition", "-go=1.26"); err != nil {
+		return err
+	}
+	if version := moduleVersion(); version != "" {
+		if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-require=github.com/xd-dash/smoke@"+version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func acquire(ctx context.Context, mode filelock.Mode) (*filelock.Lock, error) {
+	dir, err := compositionDir()
+	if err != nil {
+		return nil, err
+	}
+	return filelock.Acquire(ctx, filepath.Join(dir, ".composition.lock"), mode)
 }
 
 func snapshotManifest() (string, []byte, bool, error) {
@@ -175,17 +349,32 @@ func restoreManifest(path string, data []byte, existed bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp := path + fmt.Sprintf(".rollback-%d", os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".composition-rollback-*.tmp")
+	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	return os.Rename(tmp, path)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, goBin, args...)
 	cmd.Dir = dir
+	// Recomposition is its own module operation. Never let an active Smoke
+	// environment's GOWORK alter dependency selection for the Smoke binary.
+	cmd.Env = withEnv(os.Environ(), "GOWORK", "off")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -193,6 +382,17 @@ func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 		return fmt.Errorf("go %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+func withEnv(values []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(values)+1)
+	for _, item := range values {
+		if !strings.HasPrefix(item, prefix) {
+			out = append(out, item)
+		}
+	}
+	return append(out, prefix+value)
 }
 
 func renderMain(manifest Manifest) string {

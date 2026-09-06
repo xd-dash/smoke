@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -16,12 +17,24 @@ var global = struct {
 	handlers map[string]Handler
 }{handlers: map[string]Handler{}}
 
+var reserved = map[string]struct{}{
+	"commands": {},
+	"compose":  {},
+	"env":      {},
+}
+
 // Register adds one compiled-in command. It panics on programmer errors so a
 // bad composition fails immediately during process initialization rather than
 // leaving an ambiguous command graph.
 func Register(name string, handler Handler) {
 	if name == "" {
 		panic("smoke command: empty name")
+	}
+	if strings.TrimSpace(name) != name || strings.ContainsAny(name, " \t\r\n") {
+		panic(fmt.Sprintf("smoke command %q: name must be one non-whitespace token", name))
+	}
+	if _, exists := reserved[name]; exists {
+		panic(fmt.Sprintf("smoke command %q: reserved by Smoke", name))
 	}
 	if handler == nil {
 		panic(fmt.Sprintf("smoke command %q: nil handler", name))

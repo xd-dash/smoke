@@ -93,32 +93,35 @@ func TestListIsSortedAndOnlyIncludesWorkspaces(t *testing.T) {
 	}
 }
 
-func TestActivateRestoresProcessEnvironment(t *testing.T) {
+func TestCommandScopesEnvironmentToChild(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SMOKE_ENV_DIR", root)
-	t.Setenv("GOWORK", "old.work")
-	t.Setenv("SMOKE_ENV", "old")
+	t.Setenv("GOWORK", "parent.work")
+	t.Setenv("SMOKE_ENV", "parent")
 	env, err := Create(context.Background(), "infra")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	restore, err := Activate(env)
-	if err != nil {
-		t.Fatal(err)
+	cmd := Command(context.Background(), env, env.Dir, "echo", "ok")
+	values := make(map[string]string)
+	for _, item := range cmd.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[key] = value
+		}
 	}
-	if got := os.Getenv("GOWORK"); got != env.WorkFile {
-		t.Fatalf("GOWORK=%q want %q", got, env.WorkFile)
+	if got := values["GOWORK"]; got != env.WorkFile {
+		t.Fatalf("child GOWORK=%q want %q", got, env.WorkFile)
 	}
-	if got := os.Getenv("SMOKE_ENV"); got != "infra" {
-		t.Fatalf("SMOKE_ENV=%q", got)
+	if got := values["SMOKE_ENV"]; got != "infra" {
+		t.Fatalf("child SMOKE_ENV=%q", got)
 	}
-	restore()
-	if got := os.Getenv("GOWORK"); got != "old.work" {
-		t.Fatalf("restored GOWORK=%q", got)
+	if got := os.Getenv("GOWORK"); got != "parent.work" {
+		t.Fatalf("parent GOWORK mutated: %q", got)
 	}
-	if got := os.Getenv("SMOKE_ENV"); got != "old" {
-		t.Fatalf("restored SMOKE_ENV=%q", got)
+	if got := os.Getenv("SMOKE_ENV"); got != "parent" {
+		t.Fatalf("parent SMOKE_ENV mutated: %q", got)
 	}
 }
 

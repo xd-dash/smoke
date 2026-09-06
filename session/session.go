@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/xd-dash/smoke/internal/filelock"
 )
 
 // Record is lightweight local supervision metadata for one running unattended
@@ -28,7 +30,9 @@ type Record struct {
 }
 
 type Handle struct {
-	path string
+	path      string
+	leasePath string
+	lease     *filelock.Lock
 }
 
 func Begin(record Record) (*Handle, Record, error) {
@@ -36,33 +40,72 @@ func Begin(record Record) (*Handle, Record, error) {
 	if err != nil {
 		return nil, Record{}, err
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, Record{}, fmt.Errorf("create session directory: %w", err)
 	}
-	id, err := newID()
-	if err != nil {
-		return nil, Record{}, err
+
+	// The lease is the authoritative liveness token. Holding it for the lifetime
+	// of the Logmash process prevents stale metadata plus PID reuse from making an
+	// old session appear to own an unrelated process.
+	var id, leasePath string
+	var lease *filelock.Lock
+	for attempts := 0; attempts < 8; attempts++ {
+		id, err = newID()
+		if err != nil {
+			return nil, Record{}, err
+		}
+		leasePath = filepath.Join(dir, id+".lock")
+		var ok bool
+		lease, ok, err = filelock.TryAcquire(leasePath, filelock.Exclusive)
+		if err != nil {
+			return nil, Record{}, fmt.Errorf("session lease: %w", err)
+		}
+		if ok {
+			break
+		}
+		lease = nil
 	}
+	if lease == nil {
+		return nil, Record{}, fmt.Errorf("could not allocate unique session lease")
+	}
+
 	record.ID = id
 	record.PID = os.Getpid()
 	record.StartedAt = time.Now().UTC()
 	record.Callbacks = SanitizeCallbacks(record.Callbacks)
 	path := filepath.Join(dir, id+".json")
 	if err := writeAtomic(path, record); err != nil {
+		_ = lease.Close()
+		_ = os.Remove(leasePath)
 		return nil, Record{}, err
 	}
-	return &Handle{path: path}, record, nil
+	return &Handle{path: path, leasePath: leasePath, lease: lease}, record, nil
 }
 
 func (h *Handle) Close() error {
-	if h == nil || h.path == "" {
+	if h == nil {
 		return nil
 	}
-	err := os.Remove(h.path)
-	if os.IsNotExist(err) {
-		return nil
+	var first error
+	if h.path != "" {
+		if err := os.Remove(h.path); err != nil && !os.IsNotExist(err) {
+			first = err
+		}
+		h.path = ""
 	}
-	return err
+	if h.lease != nil {
+		if err := h.lease.Close(); err != nil && first == nil {
+			first = err
+		}
+		h.lease = nil
+	}
+	if h.leasePath != "" {
+		if err := os.Remove(h.leasePath); err != nil && !os.IsNotExist(err) && first == nil {
+			first = err
+		}
+		h.leasePath = ""
+	}
+	return first
 }
 
 func List() ([]Record, error) {
@@ -87,8 +130,12 @@ func List() ([]Record, error) {
 		if err != nil {
 			continue
 		}
-		if !processAlive(record.PID) {
-			_ = os.Remove(path)
+		live, err := leaseHeld(filepath.Join(dir, record.ID+".lock"))
+		if err != nil {
+			continue
+		}
+		if !live || !processAlive(record.PID) {
+			cleanupStale(dir, record.ID)
 			continue
 		}
 		records = append(records, record)
@@ -122,11 +169,37 @@ func runningRecord(id string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	if !processAlive(record.PID) {
-		_ = os.Remove(path)
+	live, err := leaseHeld(filepath.Join(dir, id+".lock"))
+	if err != nil {
+		return Record{}, err
+	}
+	if !live || !processAlive(record.PID) {
+		cleanupStale(dir, id)
 		return Record{}, fmt.Errorf("session %s is not running", id)
 	}
 	return record, nil
+}
+
+// leaseHeld reports whether another process currently owns the session lease.
+// If the exclusive lock can be acquired, there is no live owner and the lease
+// is immediately released again.
+func leaseHeld(path string) (bool, error) {
+	lock, ok, err := filelock.TryAcquire(path, filelock.Exclusive)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return true, nil
+	}
+	if err := lock.Close(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func cleanupStale(dir, id string) {
+	_ = os.Remove(filepath.Join(dir, id+".json"))
+	_ = os.Remove(filepath.Join(dir, id+".lock"))
 }
 
 func SanitizeCallbacks(values []string) []string {
@@ -168,6 +241,9 @@ func SanitizeCallbacks(values []string) []string {
 }
 
 func directory() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("SMOKE_SESSION_DIR")); dir != "" {
+		return filepath.Abs(dir)
+	}
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("user cache directory: %w", err)
@@ -188,11 +264,24 @@ func writeAtomic(path string, record Record) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(body, '\n'), 0600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".session-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(body, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func read(path string) (Record, error) {

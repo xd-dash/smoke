@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/xd-dash/smoke/internal/filelock"
 )
 
 const goVersion = "1.26"
@@ -16,11 +18,12 @@ const goVersion = "1.26"
 var validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type Environment struct {
-	Name      string
-	Dir       string
-	WorkFile  string
-	ToolsDir  string
-	ToolsMod  string
+	Name     string
+	Dir      string
+	WorkFile string
+	ToolsDir string
+	ToolsMod string
+	LockFile string
 }
 
 func Root() (string, error) {
@@ -45,12 +48,23 @@ func Resolve(name string) (Environment, error) {
 	}
 	dir := filepath.Join(root, name)
 	return Environment{
-		Name: name,
-		Dir: dir,
+		Name:     name,
+		Dir:      dir,
 		WorkFile: filepath.Join(dir, "go.work"),
 		ToolsDir: filepath.Join(dir, "tools"),
 		ToolsMod: "smoke.local/env/" + name + "/tools",
+		LockFile: filepath.Join(root, ".locks", name+".lock"),
 	}, nil
+}
+
+// AcquireShared prevents workspace mutation while an environment-backed process
+// is using the workspace. Multiple readers may coexist.
+func AcquireShared(ctx context.Context, env Environment) (*filelock.Lock, error) {
+	return filelock.Acquire(ctx, env.LockFile, filelock.Shared)
+}
+
+func acquireExclusive(ctx context.Context, env Environment) (*filelock.Lock, error) {
+	return filelock.Acquire(ctx, env.LockFile, filelock.Exclusive)
 }
 
 func Create(ctx context.Context, name string) (Environment, error) {
@@ -58,6 +72,12 @@ func Create(ctx context.Context, name string) (Environment, error) {
 	if err != nil {
 		return Environment{}, err
 	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return Environment{}, err
+	}
+	defer lock.Close()
+
 	if _, err := os.Stat(env.WorkFile); err == nil {
 		return Environment{}, fmt.Errorf("environment %q already exists", name)
 	} else if !os.IsNotExist(err) {
@@ -91,7 +111,7 @@ func List() ([]Environment, error) {
 	}
 	var out []Environment
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == ".locks" {
 			continue
 		}
 		env, err := Resolve(entry.Name())
@@ -117,6 +137,9 @@ func Require(name string) (Environment, error) {
 		}
 		return Environment{}, err
 	}
+	if _, err := os.Stat(filepath.Join(env.ToolsDir, "go.mod")); err != nil {
+		return Environment{}, fmt.Errorf("environment %q tools module: %w", name, err)
+	}
 	return env, nil
 }
 
@@ -132,6 +155,11 @@ func Use(ctx context.Context, name, moduleDir string) error {
 	if _, err := os.Stat(filepath.Join(moduleDir, "go.mod")); err != nil {
 		return fmt.Errorf("workspace module %s: %w", moduleDir, err)
 	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return runGo(ctx, env.Dir, env.WorkFile, "work", "use", moduleDir)
 }
 
@@ -144,6 +172,11 @@ func DropUse(ctx context.Context, name, moduleDir string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return runGo(ctx, env.Dir, env.WorkFile, "work", "edit", "-dropuse="+moduleDir)
 }
 
@@ -156,6 +189,11 @@ func AddTool(ctx context.Context, name, packageSpec string) error {
 	if packageSpec == "" {
 		return fmt.Errorf("tool package is required")
 	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return runGo(ctx, env.ToolsDir, "off", "get", "-tool", packageSpec)
 }
 
@@ -168,6 +206,11 @@ func RemoveTool(ctx context.Context, name, packagePath string) error {
 	if packagePath == "" {
 		return fmt.Errorf("tool package is required")
 	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := runGo(ctx, env.ToolsDir, "off", "mod", "edit", "-droptool="+packagePath); err != nil {
 		return err
 	}
@@ -183,22 +226,6 @@ func Command(ctx context.Context, env Environment, dir, program string, args ...
 	cmd.Env = withEnv(os.Environ(), "GOWORK", env.WorkFile)
 	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV", env.Name)
 	return cmd
-}
-
-func Activate(env Environment) (restore func(), err error) {
-	oldWork, hadWork := os.LookupEnv("GOWORK")
-	oldEnv, hadEnv := os.LookupEnv("SMOKE_ENV")
-	if err := os.Setenv("GOWORK", env.WorkFile); err != nil {
-		return nil, err
-	}
-	if err := os.Setenv("SMOKE_ENV", env.Name); err != nil {
-		if hadWork { _ = os.Setenv("GOWORK", oldWork) } else { _ = os.Unsetenv("GOWORK") }
-		return nil, err
-	}
-	return func() {
-		if hadWork { _ = os.Setenv("GOWORK", oldWork) } else { _ = os.Unsetenv("GOWORK") }
-		if hadEnv { _ = os.Setenv("SMOKE_ENV", oldEnv) } else { _ = os.Unsetenv("SMOKE_ENV") }
-	}, nil
 }
 
 func runGo(ctx context.Context, dir, gowork string, args ...string) error {
