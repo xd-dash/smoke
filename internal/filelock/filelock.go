@@ -22,27 +22,40 @@ type Lock struct {
 	file *os.File
 }
 
-// Acquire waits until path can be locked in the requested mode or ctx is canceled.
-func Acquire(ctx context.Context, path string, mode Mode) (*Lock, error) {
+// TryAcquire attempts to lock path once. ok is false when another process owns
+// an incompatible lock. The returned lock must be closed when ok is true.
+func TryAcquire(path string, mode Mode) (lock *Lock, ok bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	locked, err := tryLock(file, mode)
+	if err != nil {
+		_ = file.Close()
+		return nil, false, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if !locked {
+		_ = file.Close()
+		return nil, false, nil
+	}
+	return &Lock{file: file}, true, nil
+}
+
+// Acquire waits until path can be locked in the requested mode or ctx is canceled.
+func Acquire(ctx context.Context, path string, mode Mode) (*Lock, error) {
 	for {
-		locked, err := tryLock(file, mode)
+		lock, ok, err := TryAcquire(path, mode)
 		if err != nil {
-			_ = file.Close()
-			return nil, fmt.Errorf("lock %s: %w", path, err)
+			return nil, err
 		}
-		if locked {
-			return &Lock{file: file}, nil
+		if ok {
+			return lock, nil
 		}
 		select {
 		case <-ctx.Done():
-			_ = file.Close()
 			return nil, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
