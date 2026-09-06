@@ -31,11 +31,12 @@ type Environment struct {
 }
 
 // Workspace is an immutable, content-addressed snapshot of an Environment's
-// go.work state. Long-lived commands use the snapshot so canonical environment
-// mutation never has to wait for the command lifetime.
+// workspace and tool manifests. Long-lived commands use the snapshot so the
+// canonical environment can evolve without waiting for their lifetime.
 type Workspace struct {
 	Environment Environment
 	WorkFile    string
+	ToolsDir    string
 	Digest      string
 }
 
@@ -258,9 +259,9 @@ func RemoveTool(ctx context.Context, name, packagePath string) error {
 	return runGo(ctx, env.ToolsDir, "off", "mod", "tidy")
 }
 
-// Snapshot reads the canonical go.work under a short shared lock, normalizes
-// local paths to absolute paths, and writes an immutable content-addressed
-// workspace into the user cache. Once returned, the canonical lock is released.
+// Snapshot reads canonical workspace/tool state under one short shared lock,
+// then writes an immutable content-addressed workspace into the user cache.
+// The returned snapshot no longer needs the environment lock.
 func Snapshot(ctx context.Context, env Environment) (Workspace, error) {
 	lock, err := AcquireShared(ctx, env)
 	if err != nil {
@@ -283,22 +284,48 @@ func Snapshot(ctx context.Context, env Environment) (Workspace, error) {
 	if err := json.Unmarshal(output, &parsed); err != nil {
 		return Workspace{}, fmt.Errorf("decode workspace %s: %w", env.WorkFile, err)
 	}
+
+	toolsMod, err := os.ReadFile(filepath.Join(env.ToolsDir, "go.mod"))
+	if err != nil {
+		return Workspace{}, fmt.Errorf("read environment tools go.mod: %w", err)
+	}
+	toolsSum, sumExists, err := readOptional(filepath.Join(env.ToolsDir, "go.sum"))
+	if err != nil {
+		return Workspace{}, fmt.Errorf("read environment tools go.sum: %w", err)
+	}
 	body, err := renderSnapshot(env, parsed)
 	if err != nil {
 		return Workspace{}, err
 	}
-	sum := sha256.Sum256(body)
-	digest := hex.EncodeToString(sum[:])
+
+	hash := sha256.New()
+	_, _ = hash.Write(body)
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(toolsMod)
+	_, _ = hash.Write([]byte{0})
+	if sumExists {
+		_, _ = hash.Write(toolsSum)
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
 		return Workspace{}, fmt.Errorf("user cache directory: %w", err)
 	}
 	dir := filepath.Join(cacheRoot, "smoke", "env-workspaces", env.Name, digest)
 	workFile := filepath.Join(dir, "go.work")
+	toolsDir := filepath.Join(dir, "tools")
 	if err := writeImmutable(workFile, body); err != nil {
 		return Workspace{}, err
 	}
-	return Workspace{Environment: env, WorkFile: workFile, Digest: digest}, nil
+	if err := writeImmutable(filepath.Join(toolsDir, "go.mod"), toolsMod); err != nil {
+		return Workspace{}, err
+	}
+	if sumExists {
+		if err := writeImmutable(filepath.Join(toolsDir, "go.sum"), toolsSum); err != nil {
+			return Workspace{}, err
+		}
+	}
+	return Workspace{Environment: env, WorkFile: workFile, ToolsDir: toolsDir, Digest: digest}, nil
 }
 
 func renderSnapshot(env Environment, work goWorkJSON) ([]byte, error) {
@@ -314,11 +341,11 @@ func renderSnapshot(env Environment, work goWorkJSON) ([]byte, error) {
 		fmt.Fprintf(&b, "\ngodebug %s=%s\n", setting.Key, setting.Value)
 	}
 	if len(work.Use) == 1 {
-		fmt.Fprintf(&b, "\nuse %s\n", strconv.Quote(workspacePath(env.Dir, work.Use[0].DiskPath)))
+		fmt.Fprintf(&b, "\nuse %s\n", strconv.Quote(snapshotUsePath(env, work.Use[0].DiskPath)))
 	} else if len(work.Use) > 1 {
 		b.WriteString("\nuse (\n")
 		for _, use := range work.Use {
-			fmt.Fprintf(&b, "\t%s\n", strconv.Quote(workspacePath(env.Dir, use.DiskPath)))
+			fmt.Fprintf(&b, "\t%s\n", strconv.Quote(snapshotUsePath(env, use.DiskPath)))
 		}
 		b.WriteString(")\n")
 	}
@@ -331,6 +358,23 @@ func renderSnapshot(env Environment, work goWorkJSON) ([]byte, error) {
 		fmt.Fprintf(&b, "\nreplace %s => %s\n", old, newToken)
 	}
 	return []byte(b.String()), nil
+}
+
+func snapshotUsePath(env Environment, path string) string {
+	resolved := workspacePath(env.Dir, path)
+	if samePath(resolved, env.ToolsDir) {
+		return "./tools"
+	}
+	return resolved
+}
+
+func samePath(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb)
 }
 
 func workspacePath(base, path string) string {
@@ -347,6 +391,17 @@ func moduleToken(module goWorkModule) string {
 	return module.Path + "@" + module.Version
 }
 
+func readOptional(path string) ([]byte, bool, error) {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return body, true, nil
+}
+
 func writeImmutable(path string, body []byte) error {
 	if current, err := os.ReadFile(path); err == nil {
 		if string(current) != string(body) {
@@ -359,7 +414,7 @@ func writeImmutable(path string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".go.work-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".snapshot-*")
 	if err != nil {
 		return err
 	}
