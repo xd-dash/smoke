@@ -52,13 +52,20 @@ func (p Provider) RunSubscription(ctx context.Context, sub Subscription, dispatc
 		return fmt.Errorf("redis ping: %w", err)
 	}
 
-	pubsub := client.Subscribe(ctx, sub.Channels...)
-	defer pubsub.Close()
-	if len(sub.Patterns) > 0 {
-		if err := pubsub.PSubscribe(ctx, sub.Patterns...); err != nil {
-			return fmt.Errorf("redis psubscribe: %w", err)
+	var pubsub *redis.PubSub
+	if len(sub.Channels) > 0 {
+		pubsub = client.Subscribe(ctx, sub.Channels...)
+		if len(sub.Patterns) > 0 {
+			if err := pubsub.PSubscribe(ctx, sub.Patterns...); err != nil {
+				_ = pubsub.Close()
+				return fmt.Errorf("redis psubscribe: %w", err)
+			}
 		}
+	} else {
+		pubsub = client.PSubscribe(ctx, sub.Patterns...)
 	}
+	defer pubsub.Close()
+
 	if _, err := pubsub.Receive(ctx); err != nil {
 		return fmt.Errorf("redis subscribe: %w", err)
 	}
