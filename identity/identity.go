@@ -3,6 +3,7 @@ package identity
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,8 +13,8 @@ import (
 )
 
 // Info describes the logical composition of the currently running Smoke binary.
-// Components are populated by the binary's composition entrypoint, not by the
-// mutable on-disk composition manifest.
+// Components self-register during package initialization, so this identity is
+// owned by the running process rather than the mutable composition manifest.
 type Info struct {
 	Digest     string
 	Executable string
@@ -23,29 +24,35 @@ type Info struct {
 
 var state = struct {
 	sync.RWMutex
-	components []string
-}{}
+	components map[string]struct{}
+}{components: map[string]struct{}{}}
 
-// SetComponents records the exact logical component list compiled into this
-// entrypoint. Generated compositions and the default cmd/smoke entrypoint call
-// this before dispatching commands.
-func SetComponents(values ...string) {
-	components := normalize(values)
+// RegisterComponent records one optional package as part of the running Smoke
+// composition. Optional component packages should call this from init().
+func RegisterComponent(importPath string) {
+	importPath = strings.TrimSpace(importPath)
+	if importPath == "" || strings.ContainsAny(importPath, " \t\r\n") {
+		panic(fmt.Sprintf("smoke identity: invalid component %q", importPath))
+	}
 	state.Lock()
-	state.components = components
+	state.components[importPath] = struct{}{}
 	state.Unlock()
 }
 
 func Components() []string {
 	state.RLock()
 	defer state.RUnlock()
-	return append([]string(nil), state.components...)
+	out := make([]string, 0, len(state.components))
+	for component := range state.components {
+		out = append(out, component)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func CompositionDigest() string {
-	components := Components()
 	h := sha256.New()
-	for _, component := range components {
+	for _, component := range Components() {
 		_, _ = h.Write([]byte(component))
 		_, _ = h.Write([]byte{0})
 	}
@@ -75,24 +82,5 @@ func WorkspaceDigest() string {
 	if work == "" {
 		return ""
 	}
-	dir := filepath.Dir(work)
-	return filepath.Base(dir)
-}
-
-func normalize(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	return filepath.Base(filepath.Dir(work))
 }
