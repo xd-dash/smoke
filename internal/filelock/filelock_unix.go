@@ -9,8 +9,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func tryLock(file *os.File) (bool, error) {
-	err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+func tryLock(file *os.File, mode Mode) (bool, error) {
+	op := unix.LOCK_SH
+	if mode == Exclusive {
+		op = unix.LOCK_EX
+	}
+	err := unix.Flock(int(file.Fd()), op|unix.LOCK_NB)
 	if err == nil {
 		return true, nil
 	}
