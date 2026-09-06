@@ -35,3 +35,16 @@ func TestNamesContainsRegisteredCommand(t *testing.T) {
 	}
 	t.Fatalf("Names() does not contain %q: %#v", name, Names())
 }
+
+func TestRegisterRejectsReservedAndWhitespaceNames(t *testing.T) {
+	for _, name := range []string{"env", "compose", "commands", "bad name", " padded"} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("Register(%q) did not panic", name)
+				}
+			}()
+			Register(name, func([]string) error { return nil })
+		})
+	}
+}
