@@ -27,25 +27,37 @@ var state = struct {
 	components map[string]struct{}
 }{components: map[string]struct{}{}}
 
-// SetComponents installs component identities embedded by an entrypoint. Calls
-// are additive and idempotent so packages may also self-register their identity.
+// SetComponents installs the complete component identity embedded by the
+// composition entrypoint. The supplied list is authoritative: it replaces any
+// compatibility registrations that may have happened during package init.
 func SetComponents(components ...string) {
+	next := make(map[string]struct{}, len(components))
 	for _, component := range components {
-		RegisterComponent(component)
+		component = validComponent(component)
+		next[component] = struct{}{}
 	}
+	state.Lock()
+	state.components = next
+	state.Unlock()
 }
 
-// RegisterComponent records one optional package in the running composition.
-// This is the fallback for generated compositions until all entrypoints embed the
-// normalized component list directly.
+// RegisterComponent is retained for source compatibility with optional packages
+// that adopted the earlier self-registration idiom. Generated and canonical
+// Smoke entrypoints call SetComponents with the complete normalized composition,
+// so package self-registration is no longer required for correct identity.
 func RegisterComponent(component string) {
+	component = validComponent(component)
+	state.Lock()
+	state.components[component] = struct{}{}
+	state.Unlock()
+}
+
+func validComponent(component string) string {
 	component = strings.TrimSpace(component)
 	if component == "" || strings.ContainsAny(component, " \t\r\n") {
 		panic(fmt.Sprintf("smoke identity: invalid component %q", component))
 	}
-	state.Lock()
-	state.components[component] = struct{}{}
-	state.Unlock()
+	return component
 }
 
 func Components() []string {
