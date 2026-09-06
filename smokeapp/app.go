@@ -71,12 +71,9 @@ func runCompose(args []string) error {
 		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
 			return fmt.Errorf("usage: smoke compose add <go-import-path>")
 		}
-		manifest, err := selfbuild.Load()
-		if err != nil {
-			return err
-		}
-		manifest = selfbuild.WithAdded(manifest, args[1])
-		path, err := selfbuild.Apply(ctx, manifest)
+		path, err := selfbuild.Update(ctx, func(manifest selfbuild.Manifest) selfbuild.Manifest {
+			return selfbuild.WithAdded(manifest, args[1])
+		})
 		if err != nil {
 			return err
 		}
@@ -86,12 +83,9 @@ func runCompose(args []string) error {
 		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
 			return fmt.Errorf("usage: smoke compose remove <go-import-path>")
 		}
-		manifest, err := selfbuild.Load()
-		if err != nil {
-			return err
-		}
-		manifest = selfbuild.WithRemoved(manifest, args[1])
-		path, err := selfbuild.Apply(ctx, manifest)
+		path, err := selfbuild.Update(ctx, func(manifest selfbuild.Manifest) selfbuild.Manifest {
+			return selfbuild.WithRemoved(manifest, args[1])
+		})
 		if err != nil {
 			return err
 		}
@@ -101,11 +95,7 @@ func runCompose(args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: smoke compose rebuild")
 		}
-		manifest, err := selfbuild.Load()
-		if err != nil {
-			return err
-		}
-		path, err := selfbuild.Apply(ctx, manifest)
+		path, err := selfbuild.Rebuild(ctx)
 		if err != nil {
 			return err
 		}
