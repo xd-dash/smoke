@@ -1,6 +1,8 @@
 package selfbuild
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
@@ -24,6 +26,9 @@ func TestRenderMainImportsAndEmbedsSelectedComponents(t *testing.T) {
 		DefaultLogmash,
 		"example.com/optional/provider",
 	}})
+	if _, err := parser.ParseFile(token.NewFileSet(), "main.go", source, parser.AllErrors); err != nil {
+		t.Fatalf("generated main is invalid Go: %v\n%s", err, source)
+	}
 	for _, want := range []string{
 		`"github.com/xd-dash/smoke/identity"`,
 		`"github.com/xd-dash/smoke/smokeapp"`,
@@ -52,6 +57,9 @@ func TestRenderMainImportsAndEmbedsSelectedComponents(t *testing.T) {
 
 func TestRenderMainEmbedsEmptyComposition(t *testing.T) {
 	source := renderMain(Manifest{})
+	if _, err := parser.ParseFile(token.NewFileSet(), "main.go", source, parser.AllErrors); err != nil {
+		t.Fatalf("generated empty main is invalid Go: %v\n%s", err, source)
+	}
 	if !strings.Contains(source, "identity.SetComponents(\n\t)") {
 		t.Fatalf("generated empty composition missing authoritative identity call:\n%s", source)
 	}
