@@ -12,6 +12,14 @@ workspace digest
 
 The pair is useful when a smoke test fails because it tells you both what the Smoke binary was composed to do and which Go workspace/tool state the runtime saw.
 
+## Composition identity ownership
+
+The composition entrypoint owns the complete logical component list. Both the canonical `cmd/smoke` entrypoint and self-generated compositions call `identity.SetComponents(...)` with the normalized component imports they link.
+
+Optional packages still register commands/providers during Go package initialization, but they do **not** need a separate component-identity registration hook. This keeps identity generation coupled to the same manifest/import list that actually builds the binary and removes the possibility that an optional component is linked successfully but omitted from inspection metadata.
+
+`identity.RegisterComponent` remains available for source compatibility with packages written against the earlier convention. The entrypoint's `SetComponents` call is authoritative and replaces any compatibility registrations made during package initialization.
+
 ## Inspect the running Smoke binary
 
 ```sh

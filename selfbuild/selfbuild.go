@@ -396,12 +396,17 @@ func withEnv(values []string, key, value string) []string {
 }
 
 func renderMain(manifest Manifest) string {
+	components := normalize(manifest.Components)
 	var b strings.Builder
-	b.WriteString("package main\n\nimport (\n\t\"os\"\n\t\"github.com/xd-dash/smoke/smokeapp\"\n")
-	for _, component := range normalize(manifest.Components) {
+	b.WriteString("package main\n\nimport (\n\t\"os\"\n\t\"github.com/xd-dash/smoke/identity\"\n\t\"github.com/xd-dash/smoke/smokeapp\"\n")
+	for _, component := range components {
 		fmt.Fprintf(&b, "\t_ %q\n", component)
 	}
-	b.WriteString(")\n\nfunc main() { smokeapp.Main(os.Args[1:]) }\n")
+	b.WriteString(")\n\nfunc main() {\n\tidentity.SetComponents(\n")
+	for _, component := range components {
+		fmt.Fprintf(&b, "\t\t%q,\n", component)
+	}
+	b.WriteString("\t)\n\tsmokeapp.Main(os.Args[1:])\n}\n")
 	return b.String()
 }
 
