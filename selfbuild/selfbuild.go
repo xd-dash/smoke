@@ -11,6 +11,8 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+
+	"github.com/xd-dash/smoke/internal/filelock"
 )
 
 const DefaultLogmash = "github.com/xd-dash/smoke/cmd/logmash"
@@ -82,12 +84,49 @@ func WithRemoved(manifest Manifest, importPath string) Manifest {
 	return manifest
 }
 
-// Apply builds the requested composition first. Only after the Go build
-// succeeds does it persist the manifest and atomically replace the current
-// Smoke executable. If executable replacement fails after the manifest write,
-// the previous manifest bytes are restored so desired state does not advance
-// past the executable that is still installed.
+// Update performs a locked read-modify-rebuild transaction. It prevents two
+// compose operations from both reading an old manifest and silently losing one
+// writer's change.
+func Update(ctx context.Context, transform func(Manifest) Manifest) (string, error) {
+	lock, err := acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	manifest, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return applyLocked(ctx, transform(manifest))
+}
+
+// Rebuild rebuilds the current desired composition under the same lock used by
+// mutation, so a rebuild cannot overwrite a concurrent add/remove with stale state.
+func Rebuild(ctx context.Context) (string, error) {
+	lock, err := acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	manifest, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return applyLocked(ctx, manifest)
+}
+
+// Apply replaces the installed executable with exactly manifest. Prefer Update
+// for read-modify-write operations.
 func Apply(ctx context.Context, manifest Manifest) (string, error) {
+	lock, err := acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	return applyLocked(ctx, manifest)
+}
+
+func applyLocked(ctx context.Context, manifest Manifest) (string, error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		return "", fmt.Errorf("Smoke recomposition requires a preinstalled Go toolchain: %w", err)
@@ -104,10 +143,9 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	if err := os.WriteFile(filepath.Join(sourceDir, "main.go"), []byte(renderMain(manifest)), 0o600); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte(renderGoMod()), 0o600); err != nil {
+	if err := ensureGoMod(ctx, sourceDir, goBin); err != nil {
 		return "", err
 	}
-
 	if err := runGo(ctx, sourceDir, goBin, "mod", "tidy"); err != nil {
 		return "", err
 	}
@@ -149,6 +187,36 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	return target, nil
 }
 
+func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
+	path := filepath.Join(sourceDir, "go.mod")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte(renderGoMod()), 0o600); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	// Keep the composition module identity current without discarding versions
+	// already selected for optional components.
+	if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-module=smoke.local/composition", "-go=1.26"); err != nil {
+		return err
+	}
+	if version := moduleVersion(); version != "" {
+		if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-require=github.com/xd-dash/smoke@"+version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func acquire(ctx context.Context) (*filelock.Lock, error) {
+	dir, err := compositionDir()
+	if err != nil {
+		return nil, err
+	}
+	return filelock.Acquire(ctx, filepath.Join(dir, ".composition.lock"), filelock.Exclusive)
+}
+
 func snapshotManifest() (string, []byte, bool, error) {
 	path, err := manifestPath()
 	if err != nil {
@@ -186,6 +254,7 @@ func restoreManifest(path string, data []byte, existed bool) error {
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, goBin, args...)
 	cmd.Dir = dir
+	cmd.Env = withEnv(os.Environ(), "GOWORK", "off")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -193,6 +262,17 @@ func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 		return fmt.Errorf("go %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+func withEnv(values []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(values)+1)
+	for _, item := range values {
+		if !strings.HasPrefix(item, prefix) {
+			out = append(out, item)
+		}
+	}
+	return append(out, prefix+value)
 }
 
 func renderMain(manifest Manifest) string {
