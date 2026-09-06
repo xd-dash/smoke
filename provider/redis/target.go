@@ -33,6 +33,25 @@ type Subscription struct {
 	Patterns []string
 }
 
+type subscriptionKind int
+
+const (
+	subscriptionChannels subscriptionKind = iota + 1
+	subscriptionPatterns
+	subscriptionMixed
+)
+
+func classifySubscription(channels, patterns []string) subscriptionKind {
+	switch {
+	case len(channels) > 0 && len(patterns) > 0:
+		return subscriptionMixed
+	case len(patterns) > 0:
+		return subscriptionPatterns
+	default:
+		return subscriptionChannels
+	}
+}
+
 func (p Provider) RunSubscription(ctx context.Context, sub Subscription, dispatcher *callback.Dispatcher) error {
 	if dispatcher == nil || dispatcher.Empty() {
 		return fmt.Errorf("redis provider requires at least one callback")
@@ -53,16 +72,17 @@ func (p Provider) RunSubscription(ctx context.Context, sub Subscription, dispatc
 	}
 
 	var pubsub *redis.PubSub
-	if len(sub.Channels) > 0 {
+	switch classifySubscription(sub.Channels, sub.Patterns) {
+	case subscriptionChannels:
 		pubsub = client.Subscribe(ctx, sub.Channels...)
-		if len(sub.Patterns) > 0 {
-			if err := pubsub.PSubscribe(ctx, sub.Patterns...); err != nil {
-				_ = pubsub.Close()
-				return fmt.Errorf("redis psubscribe: %w", err)
-			}
-		}
-	} else {
+	case subscriptionPatterns:
 		pubsub = client.PSubscribe(ctx, sub.Patterns...)
+	case subscriptionMixed:
+		pubsub = client.Subscribe(ctx, sub.Channels...)
+		if err := pubsub.PSubscribe(ctx, sub.Patterns...); err != nil {
+			_ = pubsub.Close()
+			return fmt.Errorf("redis psubscribe: %w", err)
+		}
 	}
 	defer pubsub.Close()
 
