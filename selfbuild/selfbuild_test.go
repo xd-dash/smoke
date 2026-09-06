@@ -38,12 +38,14 @@ func TestRenderMainImportsAndEmbedsSelectedComponents(t *testing.T) {
 			t.Fatalf("generated main missing %q:\n%s", want, source)
 		}
 	}
-	if got := strings.Count(source, `\t\t"example.com/optional/provider",`); got != 1 {
+	providerLine := "\t\t\"example.com/optional/provider\","
+	logmashLine := "\t\t\"github.com/xd-dash/smoke/cmd/logmash\","
+	if got := strings.Count(source, providerLine); got != 1 {
 		t.Fatalf("generated identity contains optional provider %d times:\n%s", got, source)
 	}
-	logmash := strings.Index(source, `\t\t"github.com/xd-dash/smoke/cmd/logmash",`)
-	provider := strings.Index(source, `\t\t"example.com/optional/provider",`)
-	if logmash < 0 || provider < 0 || provider > logmash {
+	provider := strings.Index(source, providerLine)
+	logmash := strings.Index(source, logmashLine)
+	if provider < 0 || logmash < 0 || provider > logmash {
 		t.Fatalf("generated identity is not normalized/sorted:\n%s", source)
 	}
 }
