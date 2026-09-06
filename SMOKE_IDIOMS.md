@@ -8,7 +8,7 @@ Smoke is a self-composed Go executable, not a runtime plugin host.
 
 - Optional commands/providers are ordinary Go packages selected by Go imports.
 - Imported command packages register through `command.Register` during process initialization.
-- Optional top-level composition packages register their logical component identity through `identity.RegisterComponent(importPath)` during initialization.
+- The composition entrypoint embeds the complete normalized component import list with `identity.SetComponents(...)`; optional packages do not need a separate component-identity registration hook.
 - Normal command dispatch is an in-process Go function call.
 - `commands`, `compose`, `env`, and `inspect` are reserved core command names and optional packages must not register them.
 - Compiled-in command names are single non-whitespace tokens. Invalid, duplicate, or reserved registrations are programmer errors and should fail during initialization.
@@ -40,7 +40,7 @@ Smoke has two distinct runtime identities:
 
 ```text
 composition digest
-    = logical set of self-registered compiled components
+    = logical set of entrypoint-embedded compiled components
 
 workspace digest
     = content-addressed immutable environment snapshot
@@ -59,7 +59,7 @@ Rules:
 - The composition digest must be derived from the component set owned by the currently running process, not from the mutable on-disk composition manifest. An old process after recomposition must not accidentally report the new manifest's identity.
 - Component import paths are normalized, deduplicated, sorted, and hashed deterministically.
 - The composition digest is a **logical composition identity**, not a byte-for-byte executable hash and not a substitute for exact Git SHA/build qualification.
-- Optional top-level composition packages must self-register their import-path identity. This is analogous to command registration but serves inspectability rather than dispatch.
+- The canonical and generated composition entrypoints must call `identity.SetComponents(...)` with the complete normalized import list they link. Package initialization may still register commands/providers, but component identity must not depend on optional packages remembering to self-register. `identity.RegisterComponent` is compatibility-only and entrypoint `SetComponents` is authoritative.
 - `smoke inspect` reports the running composition digest, executable path, Go version, component imports, and any inherited environment/workspace identity.
 - `smoke env inspect <name>` reports canonical environment paths plus the immutable runtime snapshot digest/path Smoke would use.
 - `SMOKE_ENV_WORKSPACE` identifies the exact workspace snapshot path; its content-addressed directory name is the workspace digest.
@@ -255,7 +255,7 @@ Session identity metadata is observational. Do not turn the lease/JSON registry 
 
 ## Self-composition/rebuild invariants
 
-Composition state is a sorted, deduplicated list of Go import paths.
+Composition state is a sorted, deduplicated list of Go import paths. The generated entrypoint must embed that same normalized list with `identity.SetComponents(...)` before calling `smokeapp.Main`; identity generation and import generation are one composition operation.
 
 All composition mutation is one cross-process transaction. `add`/`remove` perform manifest read, transformation, dependency resolution, candidate build, manifest commit, and executable replacement under one exclusive composition lock. `rebuild` uses the same lock.
 
