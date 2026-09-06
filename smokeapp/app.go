@@ -34,10 +34,7 @@ func Run(args []string) error {
 		}
 		return nil
 	case "inspect":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: smoke inspect")
-		}
-		return inspectRuntime()
+		return inspectRuntime(args[1:])
 	case "compose":
 		return runCompose(args[1:])
 	case "env":

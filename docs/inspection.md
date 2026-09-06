@@ -33,6 +33,32 @@ Runtime
   workspace: (none)
 ```
 
+For automation and qualification, use the versioned JSON representation:
+
+```sh
+smoke inspect --json
+```
+
+```json
+{
+  "schema": 1,
+  "kind": "smoke.runtime",
+  "composition": {
+    "digest": "5c8...",
+    "executable": "/Users/me/go/bin/smoke",
+    "go_version": "go1.26.7",
+    "components": ["github.com/xd-dash/smoke/cmd/logmash"]
+  },
+  "runtime": {
+    "environment": "",
+    "workspace_digest": "",
+    "workspace": ""
+  }
+}
+```
+
+JSON uses empty strings for unavailable runtime values rather than display strings such as `(none)`. `schema` is the compatibility boundary for machine consumers; field names within schema 1 are intended to remain stable.
+
 When Smoke itself is running under `smoke env run`, the Runtime section reports the inherited `SMOKE_ENV`, workspace digest, and exact snapshot `go.work` path.
 
 The composition digest is intentionally a logical component-set identity. It is not a byte hash of the executable and does not replace a Git SHA or CI qualification run.
@@ -54,6 +80,31 @@ Runtime snapshot
   work: ~/.cache/smoke/env-workspaces/infra/9c1.../go.work
   tools: ~/.cache/smoke/env-workspaces/infra/9c1.../tools/go.mod
 ```
+
+The corresponding machine-readable form is:
+
+```sh
+smoke env inspect infra --json
+```
+
+```json
+{
+  "schema": 1,
+  "kind": "smoke.environment",
+  "environment": {
+    "name": "infra",
+    "canonical_work": "/.../envs/infra/go.work",
+    "canonical_tools": "/.../envs/infra/tools/go.mod"
+  },
+  "runtime_snapshot": {
+    "digest": "9c1...",
+    "work": "/.../env-workspaces/infra/9c1.../go.work",
+    "tools": "/.../env-workspaces/infra/9c1.../tools/go.mod"
+  }
+}
+```
+
+`smoke env inspect --json infra` is accepted as an equivalent spelling.
 
 Inspection takes the same short coherent snapshot used by `shell`, `exec`, `build`, and `run`; it does not hold the canonical environment lock after the snapshot is materialized.
 
@@ -99,4 +150,4 @@ Environment identity
     workspace digest
 ```
 
-Together those let a higher-level workflow such as Huram record the exact source candidate plus the logical Smoke composition and runtime workspace used during a smoke test.
+Together those let a higher-level workflow such as Huram record the exact source candidate plus the logical Smoke composition and runtime workspace used during a smoke test. Machine consumers should capture the JSON documents verbatim when practical and derive indexed fields from schema 1 rather than parsing human-oriented output.
