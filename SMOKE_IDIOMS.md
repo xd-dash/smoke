@@ -1,26 +1,20 @@
 # Smoke / Logmash idioms
 
-This file is the maintenance contract for `xd-dash/smoke`. The README explains how to use Smoke; this file records the design invariants that future changes should preserve unless the design is intentionally revised.
+This file is the maintenance contract for `xd-dash/smoke`. The README and focused docs explain usage; this file records architectural invariants that future changes should preserve unless the design is intentionally revised.
 
 ## Core identity
 
 Smoke is a self-composed Go executable, not a runtime plugin host.
 
-- Optional commands/providers are ordinary Go packages.
-- A local composition imports the selected packages.
+- Optional commands/providers are ordinary Go packages selected by Go imports.
 - Imported command packages register through `command.Register` during process initialization.
+- Optional top-level composition packages register their logical component identity through `identity.RegisterComponent(importPath)` during initialization.
 - Normal command dispatch is an in-process Go function call.
-- `commands`, `compose`, and `env` are reserved core command names and optional packages must not register them.
-- Compiled-in command names are single non-whitespace tokens. Invalid/duplicate/reserved registrations are programmer errors and should fail the composition during initialization.
+- `commands`, `compose`, `env`, and `inspect` are reserved core command names and optional packages must not register them.
+- Compiled-in command names are single non-whitespace tokens. Invalid, duplicate, or reserved registrations are programmer errors and should fail during initialization.
 - Do not reintroduce PATH-based command discovery, separately installed Logmash executables, dynamic `.so` loading, or a resident plugin daemon unless a new requirement specifically needs them.
 
-The default composition imports:
-
-```text
-github.com/xd-dash/smoke/cmd/logmash
-```
-
-The system Go toolchain is the composition/rebuild primitive.
+The default composition imports `github.com/xd-dash/smoke/cmd/logmash`. The system Go toolchain remains the composition/rebuild primitive.
 
 ## Package direction
 
@@ -38,13 +32,45 @@ local composition
   final smoke binary
 ```
 
-Core packages must not import every optional provider merely to make them discoverable. The composition root is the authority for what is linked.
+Core packages must not import every optional provider merely to make them discoverable. The composition root remains the authority for what is linked.
+
+## Runtime identity and inspection
+
+Smoke has two distinct runtime identities:
+
+```text
+composition digest
+    = logical set of self-registered compiled components
+
+workspace digest
+    = content-addressed immutable environment snapshot
+```
+
+Together they identify the two axes relevant to a smoke-test runtime:
+
+```text
+(composition digest, workspace digest)
+        = what Smoke could do
+          + what Go workspace/tool state it saw
+```
+
+Rules:
+
+- The composition digest must be derived from the component set owned by the currently running process, not from the mutable on-disk composition manifest. An old process after recomposition must not accidentally report the new manifest's identity.
+- Component import paths are normalized, deduplicated, sorted, and hashed deterministically.
+- The composition digest is a **logical composition identity**, not a byte-for-byte executable hash and not a substitute for exact Git SHA/build qualification.
+- Optional top-level composition packages must self-register their import-path identity. This is analogous to command registration but serves inspectability rather than dispatch.
+- `smoke inspect` reports the running composition digest, executable path, Go version, component imports, and any inherited environment/workspace identity.
+- `smoke env inspect <name>` reports canonical environment paths plus the immutable runtime snapshot digest/path Smoke would use.
+- `SMOKE_ENV_WORKSPACE` identifies the exact workspace snapshot path; its content-addressed directory name is the workspace digest.
+- Runtime identity is observational metadata. Do not turn it into another dependency graph, package resolver, persistent control plane, or authorization mechanism.
+- Exact deployment/test qualification still belongs to the external workflow that selected the repository SHA/build candidate. Smoke identity should correlate with that workflow, not replace it.
 
 ## Smoke environment/workspace invariants
 
 A Smoke environment is a named Go workspace. It is first-class Smoke tooling, not a runtime provider.
 
-The canonical Go-side representation is mutable environment state:
+Canonical mutable state is:
 
 ```text
 <env>/
@@ -57,24 +83,21 @@ The canonical Go-side representation is mutable environment state:
 Rules:
 
 - `go.work` is the canonical environment/workspace manifest.
-- `tools/go.mod` exists to carry environment-scoped Go `tool` directives and their ordinary module requirements.
+- `tools/go.mod` carries environment-scoped Go `tool` directives and their normal module requirements.
 - Do not mirror Go tool dependencies into a Smoke JSON/YAML dependency graph.
 - Use normal Go commands to mutate workspace/tool state so Go remains authoritative for version selection, sums, replacements, exclusions, and tool resolution.
-- Environment activation is scoped to child processes with `GOWORK` plus `SMOKE_ENV`; never mutate process-global `GOWORK` or cwd to implement `env run`.
-- `smoke env shell` creates a child shell; `smoke env exec` creates a child process.
-- `smoke env run` re-execs Smoke itself under the selected environment and then uses the normal compiled-in command registry in that child. This process boundary prevents parent-process environment/cwd races without introducing PATH discovery or a separate Logmash binary.
-- `smoke env build` is a thin `go build` invocation under the selected workspace. Smoke must not invent a second build graph over `go.work`.
 - Workspace `use` targets are local Go module directories containing `go.mod`.
-- The environment tools module is always part of the workspace so its declared tools are visible to `go tool` in workspace mode.
-- Canonical environment mutation (`create`, `use`, `drop`, tool add/remove) takes an exclusive cross-process environment lock.
-- Long-lived consumers (`shell`, `exec`, `build`, `run`, and tool listing) must not hold that canonical lock for their lifetime. They first take a short shared lock, snapshot one coherent environment state, release the lock, and then run against that immutable snapshot.
-- A runtime snapshot includes `go.work` plus the environment tools module manifests (`tools/go.mod` and `tools/go.sum` when present). Snapshotting only `go.work` is insufficient because a canonical tool mutation would otherwise change the running workspace's tool graph underneath it.
-- Snapshot `go.work` preserves Go/toolchain/godebug/use/replace semantics. Local project paths are normalized so the snapshot is independent of the canonical `go.work` location; the tools `use` entry points at the copied snapshot-local `./tools` module.
-- Runtime snapshots are content-addressed cache state. Equal canonical state must reuse the same digest/path; changed canonical state must create a new immutable digest/path without modifying older snapshots.
-- Do not delete a runtime snapshot merely because the launching `env run` process exits. Unattended Logmash descendants inherit the snapshot `GOWORK`, so the snapshot must outlive the launcher. Any future garbage collection must prove that a snapshot is no longer referenced, or use a conservative cache-retention policy.
-- `SMOKE_ENV_WORKSPACE` identifies the exact runtime snapshot path and is inherited along with `GOWORK`/`SMOKE_ENV`.
+- The environment tools module is always part of the workspace so declared tools are visible to `go tool` in workspace mode.
+- Canonical mutation (`create`, `use`, `drop`, tool add/remove) takes an exclusive cross-process environment lock.
+- Long-lived consumers (`shell`, `exec`, `build`, `run`, and tool listing) take only a short shared lock to snapshot one coherent environment state, release the lock, and then run against that immutable snapshot.
+- A runtime snapshot includes `go.work` plus `tools/go.mod` and `tools/go.sum` when present. Snapshotting only `go.work` is insufficient because later tool mutation would otherwise change the running tool graph.
+- Snapshot `go.work` preserves Go/toolchain/godebug/use/replace semantics. Local project paths are normalized; the tools `use` entry points at the copied snapshot-local tools module.
+- Runtime snapshots are content-addressed cache state. Equal canonical state reuses one digest/path; changed canonical state creates a new immutable digest/path and never mutates older snapshots.
+- Do not delete a snapshot merely because the launcher exits. Unattended Logmash descendants may still inherit its `GOWORK`. Future GC must prove a snapshot is unreferenced or use a conservative retention policy.
+- Environment activation is scoped to child processes with `GOWORK`, `SMOKE_ENV`, and `SMOKE_ENV_WORKSPACE`; never mutate process-global `GOWORK` or cwd to implement `env run`.
+- `smoke env shell` creates a child shell; `smoke env exec` creates an arbitrary child process; `smoke env build` remains a thin system `go build`; `smoke env run` re-execs Smoke itself and then uses normal compiled-in command dispatch.
 
-The intended ownership model is:
+Ownership model:
 
 ```text
 mutable canonical environment
@@ -92,9 +115,9 @@ canonical use/drop/tool mutation
         └── exclusive lock only for mutation duration
 ```
 
-A running command therefore keeps the environment state it started with, while a later mutation can proceed immediately and affects only later snapshots.
+A running command keeps the environment state it started with while later canonical mutation proceeds immediately and affects only later snapshots.
 
-Composition and environment are separate axes:
+Composition and environment remain separate axes:
 
 ```text
 smoke compose
@@ -104,25 +127,15 @@ smoke env
     = which local modules/tools are active while that binary is used
 ```
 
-An environment cannot make an optional Smoke command available unless that command is already present in the current binary's import-time composition.
+An environment cannot make an optional command available unless that command is already linked into the current binary.
 
-Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the already-compiled Logmash handler in the child. It must not resolve, install, or launch a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot through `GOWORK`, `SMOKE_ENV`, and `SMOKE_ENV_WORKSPACE`.
+Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the compiled Logmash handler; it must not resolve or install a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot.
 
-A running Smoke process and the installed Smoke filesystem entry are distinct after an atomic recomposition: the running process keeps its old image while the path may now name a newer composition. Therefore a re-exec concurrent with composition replacement may legitimately start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is added.
+A running Smoke process and the installed Smoke filesystem entry are distinct after atomic recomposition. A re-exec racing with a completed replacement may start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is introduced.
 
 ## Logmash source grammar
 
-A source selector is always:
-
-```text
-COUNTRY:REGION:CHANNEL
-```
-
-Pattern selectors use the same source qualification:
-
-```text
-COUNTRY:REGION:PATTERN
-```
+A source selector is `COUNTRY:REGION:CHANNEL`; pattern selectors use `COUNTRY:REGION:PATTERN`.
 
 Examples:
 
@@ -132,7 +145,7 @@ us:east:events
 us:east:worker:*
 ```
 
-The CLI identity is broad-to-narrow (`country:region`). Managed DNS is hierarchical (`region.country.logma.sh`). Callback provenance uses the logical source such as `us:west`, not the DNS spelling or physical Redis host.
+The CLI identity is broad-to-narrow (`country:region`). Managed DNS is hierarchical (`region.country.logma.sh`). Callback provenance uses the logical source such as `us:west`, not DNS spelling or the physical Redis host.
 
 Selectors are grouped by logical source. One source group owns one Redis Pub/Sub connection and may contain multiple exact channels and patterns. Exact duplicate selectors are deduplicated before connecting.
 
@@ -152,114 +165,101 @@ stdout absent
     → shell returns
     → callbacks continue
     → runtime gets a session ID
-    → stop later with `smoke logmash stop <id>`
 ```
 
-"Attached" does not mean interactive. Logmash does not require stdin. It means the process lifetime remains owned by the invoking shell and stdout is visible.
+`--no-stdout` is the normal transition to unattended callback runtime. `--attached` is only the explicit override for a no-stdout runtime that should remain shell-owned for debugging/testing.
 
-`--no-stdout` is the normal transition to an unattended callback runtime. `--attached` is only the explicit override for a no-stdout runtime that should still remain shell-owned for debugging/testing.
+Do not add a second public lifecycle axis such as `--detached`, stdout reattachment, output sockets, persisted logs, or a resident Smoke daemon unless a real requirement cannot be expressed by attached/unattended ownership.
 
-Do not add a second public lifecycle axis such as `--detached`, stdout reattachment, `logmash detach`, `SIGUSR1`, output sockets, `tail -f`, `nohup`, persisted stdout logs, or a resident Smoke daemon unless a real requirement cannot be expressed by attached/unattended ownership.
-
-Only unattended runtimes are written to the local session registry. Attached runs are not sessions.
+Only unattended runtimes are written to the local session registry.
 
 ## Runtime ownership and cancellation
 
-Logmash owns subscriptions and callbacks. Smoke only owns composition plus the small unattended start/list/stop boundary.
+Logmash owns subscriptions and callbacks. Smoke owns composition plus the small unattended start/list/stop boundary.
 
-For a Logmash invocation:
+For one invocation:
 
 - resolve all source groups before entering the receive loop;
 - create one goroutine per source subscription;
-- use one child context shared by those source goroutines;
-- the first unexpected source error cancels sibling sources;
+- share one child context across source goroutines;
+- the first unexpected source error cancels siblings;
 - normal parent cancellation is not promoted to a provider error;
 - wait for every source goroutine before returning.
 
-Do not introduce shared mutable source state when channel ownership/context cancellation is sufficient.
+Prefer context cancellation and channel/process ownership over shared mutable source state.
 
 ## Callback semantics
 
-The callback set is fixed after startup. Dispatcher policy and error-handler configuration are synchronized so concurrent configuration is race-safe, but configure-before-run remains the normal lifecycle.
+The callback set is fixed after startup. Dispatcher policy and error-handler configuration are synchronized, but configure-before-run remains the normal lifecycle.
 
-Every provider message is fanned out to all configured callbacks for that invocation. The current dispatcher waits for all callbacks for one message before receiving the next message from that source. This is deliberate backpressure, not a delivery queue.
+Every provider message is fanned out to every configured callback. The dispatcher waits for all callbacks for one message before receiving the next message from that source. This is deliberate backpressure, not a delivery queue.
 
 Therefore:
 
-- a slow webhook/Axiom callback can slow that source;
-- `continue` reports callback failures and keeps the subscription alive;
+- a slow callback can slow that source;
+- `continue` reports callback failures and keeps the source alive;
 - `fail-fast` returns the callback error and ends that source/runtime;
-- nil callback entries must fail as callback errors rather than panic the dispatcher;
-- if independent buffering/retry is ever needed, add it as an explicit bounded delivery primitive rather than silently spawning unbounded goroutines.
+- nil callback entries fail as callback errors rather than panicking;
+- if buffering/retry is needed later, add an explicit bounded delivery primitive with queue capacity, overflow policy, retries, timeout, and counters rather than silently spawning unbounded goroutines.
 
-HTTP callback response bodies must be drained and closed so the shared transport can reuse connections.
+HTTP response bodies must be drained and closed for connection reuse.
 
 ## DNS discovery invariants
 
 DNS is provider discovery, not runtime state.
 
-Redis discovery:
-
-```text
-west.us.logma.sh TXT
-  smoke=v1;provider=redis;...
-
-_rediss._tcp.west.us.logma.sh SRV
-  ...
-```
-
-Rules:
-
 - credentials never live in DNS;
 - channels/patterns never live in DNS;
 - Axiom dataset IDs never live in DNS/Terraform state;
 - auth provider/profile names may be non-secret DNS metadata;
-- multiple unrelated TXT records may coexist at a name;
-- resolver code must select a valid `smoke=v1;provider=<provider>` record rather than assuming the first Smoke TXT record belongs to that provider.
+- multiple unrelated TXT records may coexist;
+- resolver code must select a valid typed Smoke provider record rather than assume the first TXT record belongs to that provider.
 
-Service identity must not be inferred from arbitrary hostname shape when typed metadata exists.
+Service identity should come from typed metadata rather than arbitrary hostname shape when typed metadata exists.
 
 ## Provider registry invariants
 
-Provider schemes are a typed runtime dispatch boundary, not plugin discovery.
+Provider schemes are typed runtime dispatch, not plugin discovery.
 
 - nil providers are invalid;
-- schemes are normalized to lowercase and must satisfy normal URL-scheme syntax;
-- two providers may not claim the same normalized scheme;
-- a nil registry must return an error rather than panic;
+- schemes are normalized to lowercase and must satisfy URL-scheme syntax;
+- duplicate normalized schemes are invalid;
+- nil registries return errors rather than panic;
 - providers are supplied by Go composition/callers, never discovered from PATH or runtime directories.
+
+Keep provider contracts small. If providers diverge in capability, prefer narrow optional interfaces such as subscriber/publisher/resolver over growing one catch-all provider interface.
 
 ## Redis provider invariants
 
-`redisprovider.Target` and `redisprovider.Subscription` are the typed in-process boundary.
-
-- validate target, callbacks, and selectors before entering the receive loop;
+- validate target, callbacks, and selectors before receive loops;
 - PING before subscribing so connection/auth failures surface early;
-- exact-channel-only subscriptions initialize with `SUBSCRIBE`;
-- pattern-only subscriptions initialize with `PSUBSCRIBE` directly;
-- mixed subscriptions initialize exact channels and then add patterns explicitly;
-- cancellation must close Pub/Sub/client resources;
-- `Target.Source` is provenance and must remain credential-free.
+- exact-only subscriptions use `SUBSCRIBE`;
+- pattern-only subscriptions use `PSUBSCRIBE` directly;
+- mixed subscriptions initialize exact channels and then patterns explicitly;
+- cancellation closes Pub/Sub/client resources;
+- `Target.Source` is credential-free provenance.
 
-Observation credentials should be least-privilege: subscribe/read-only operations needed for observation, never publish/key mutation/admin authority.
+Observation credentials should be least-privilege and must not imply publish/key mutation/admin authority.
 
 ## Session registry
 
 The session registry is lightweight local supervision metadata for unattended Logmash processes. It is not durable Logma state.
 
-Current records contain a random session ID, PID, source/callback summaries, auth-provider name, and start timestamp. Callback metadata is sanitized before persistence.
+Current records include random session ID, PID, source/callback summaries, auth provider, start time, composition digest, environment name, workspace digest/path, and lease path. Callback metadata remains sanitized before persistence.
 
-Each live unattended process also owns an exclusive OS-backed lease file for its session ID. The lease, not PID existence alone, is the liveness authority. `list` and `stop` require both a held lease and a live PID; stale JSON/lease files are cleaned when ownership is gone. This prevents an old session record from treating a later reused PID as sufficient proof of ownership.
+Each live unattended process owns an exclusive OS-backed lease file. Lease ownership, not PID existence alone, is the liveness authority. `list` and `stop` require a held lease and a live PID; stale records are cleaned when ownership is gone.
 
-Do not weaken session identity back to PID-only checks. Do not turn the lease/JSON registry into durable Logma graph state or a resident supervision daemon.
+`smoke logmash list` should remain compact. `smoke logmash list --verbose` exposes correlation/debug metadata including composition/workspace identities and lease path.
+
+Session identity metadata is observational. Do not turn the lease/JSON registry into durable Logma graph state, orchestration state, or a resident supervision daemon.
 
 ## Self-composition/rebuild invariants
 
 Composition state is a sorted, deduplicated list of Go import paths.
 
-All composition mutation is a cross-process transaction. `add`/`remove` perform the manifest read, transformation, dependency resolution, candidate build, manifest commit, and executable replacement under one exclusive composition lock. `rebuild` uses the same lock. This prevents lost updates from concurrent CLI invocations.
+All composition mutation is one cross-process transaction. `add`/`remove` perform manifest read, transformation, dependency resolution, candidate build, manifest commit, and executable replacement under one exclusive composition lock. `rebuild` uses the same lock.
 
-Recomposition is isolated from Smoke environments: every Go command used for composition runs with `GOWORK=off`. An active `smoke env` must never alter dependency selection for the Smoke executable itself.
+Recomposition is isolated from Smoke environments: every Go command used for composition runs with `GOWORK=off`.
 
 Apply order:
 
@@ -276,12 +276,7 @@ go mod tidy
         ↓
 go build staged candidate
         ↓
-build succeeded?
-   no → restore generated source/module snapshot
-        leave installed binary + manifest unchanged
-   yes
-        ↓
-snapshot previous manifest
+build failed? restore generated source/module state
         ↓
 save desired manifest atomically
         ↓
@@ -290,26 +285,17 @@ atomic rename candidate over installed Smoke
 rename failed? restore previous manifest
 ```
 
-The installed binary is replaced only with a successfully built candidate. On Unix/macOS the executable rename is atomic at the filesystem entry level. Windows in-place replacement remains unsupported.
+The installed binary is replaced only with a successfully built candidate. Unix/macOS filesystem-entry rename is atomic. Windows in-place replacement remains unsupported.
 
-Generated composition files and manifests use unique temporary files for atomic replacement/rollback; do not use fixed temp names that can collide across processes.
+Generated composition files/manifests use unique temporary files. Do not use fixed temp names that collide across processes.
 
-When build info is available, generated `go.mod` should pin the same `github.com/xd-dash/smoke` module version that produced the running binary. `SMOKE_MODULE_VERSION` is the explicit override. Existing selected versions for optional composition dependencies should not be discarded on every rebuild; normal Go module operations own their evolution.
+When build info is available, generated `go.mod` should pin the same `github.com/xd-dash/smoke` module version that produced the running binary; `SMOKE_MODULE_VERSION` is the explicit override. Existing selected versions for optional dependencies should not be discarded on every rebuild.
 
 ## Durable Logma boundary
 
-`xd-dash/logma` remains the durable Fatline service/resource graph.
+`xd-dash/logma` remains the durable Fatline service/resource graph. Logmash remains intentionally ephemeral: receive/route, source subscriptions, stdout/Axiom/webhooks, and attached or unattended local lifetime.
 
-Logmash is intentionally ephemeral:
-
-```text
-receive + route
-source subscriptions
-stdout / Axiom / webhooks
-attached or unattended local lifetime
-```
-
-Do not make Logmash secretly depend on the durable Logma HTTP control plane merely because the Redis endpoint is hosted by Fatline. Do not weaken durable Logma resources into process-local Smoke state.
+Do not make Logmash secretly depend on the durable Logma HTTP control plane merely because Redis is hosted by Fatline. Do not weaken durable Logma resources into process-local Smoke state.
 
 ## Change protocol
 
@@ -319,14 +305,14 @@ When modifying Smoke/Logmash:
 2. Prefer import-time composition over runtime discovery.
 3. Prefer context cancellation and ownership over shared mutable state.
 4. Keep process-global cwd/environment mutation out of reusable execution paths.
-5. Serialize shared on-disk state transitions across processes, not merely goroutines.
-6. Prefer immutable runtime snapshots over holding canonical-state locks for long-lived work.
-7. Keep stdout default and attached unless the caller explicitly removes stdout.
-8. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
-9. Keep DNS discovery free of credentials and runtime dataset/channel state.
-10. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, session, callback, registry, or rebuild invariants touched by the change.
-11. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require the normal `main` CI run after merge.
-12. Update `README.md` or focused docs for user-visible behavior changes.
-13. Update this idiom file when an architectural invariant changes, not for incidental implementation details.
+5. Serialize shared on-disk transitions across processes, not merely goroutines.
+6. Prefer immutable runtime snapshots over long-lived canonical-state locks.
+7. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
+8. Keep stdout default and attached unless explicitly removed.
+9. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+10. Keep DNS discovery free of credentials and runtime dataset/channel state.
+11. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, or rebuild invariants touched by the change.
+12. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
+13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a new daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod` workspace machinery, immutable environment snapshots, attached/unattended lifetime, typed provider boundary, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
