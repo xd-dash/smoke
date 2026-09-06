@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/xd-dash/smoke/callback"
@@ -21,13 +22,18 @@ type Registry struct {
 	providers map[string]Provider
 }
 
+var validScheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
+
 func New(providers ...Provider) (*Registry, error) {
 	r := &Registry{providers: make(map[string]Provider)}
 	for _, provider := range providers {
+		if provider == nil {
+			return nil, fmt.Errorf("smoke: nil provider")
+		}
 		for _, scheme := range provider.Schemes() {
 			scheme = strings.ToLower(strings.TrimSpace(scheme))
-			if scheme == "" {
-				return nil, fmt.Errorf("smoke: provider registered empty scheme")
+			if !validScheme.MatchString(scheme) {
+				return nil, fmt.Errorf("smoke: provider registered invalid scheme %q", scheme)
 			}
 			if _, exists := r.providers[scheme]; exists {
 				return nil, fmt.Errorf("smoke: duplicate provider for scheme %q", scheme)
@@ -39,6 +45,9 @@ func New(providers ...Provider) (*Registry, error) {
 }
 
 func (r *Registry) Run(ctx context.Context, rawURL string, dispatcher *callback.Dispatcher) error {
+	if r == nil {
+		return fmt.Errorf("smoke: nil registry")
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("smoke: parse URL: %w", err)
