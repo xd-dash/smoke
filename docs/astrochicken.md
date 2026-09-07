@@ -1,76 +1,50 @@
-# Astrochicken
+# Agni / Astrochicken composition
 
-`astrochicken` is Smoke's narrow orchestration boundary for disposable environment probes.
+Astrochicken is Smoke domain vocabulary. Agni does not implement an Astrochicken environment or Terraform root.
 
-Smoke does not know Terraform, Agni repository layouts, cloud providers, or the topology being deployed. Those belong to a compiled-in Astrochicken provider.
-
-```text
-smoke astrochicken ...
-        |
-        v
-Astrochicken provider contract
-        |
-        v
-compiled provider package
-        |
-        v
-Agni environment implementation
-```
-
-A provider is ordinary Go composition. It registers with `astrochicken.Register`; runtime provider discovery, PATH plugins, and provider subprocess lookup are not used.
-
-The command package is optional:
+The composed command is:
 
 ```text
-smoke compose add github.com/xd-dash/smoke/cmd/astrochicken
+smoke agni astrochicken deploy
 ```
 
-An implementation package can import that command package itself so adding the implementation is sufficient to make `smoke astrochicken` available.
+The dependency boundary is:
+
+```text
+Smoke cmd/agni
+    |
+    +-- Smoke Astrochicken recipe
+    |      - chooses a two-node representative topology
+    |      - owns gateway/world test meaning
+    |      - owns outside-vs-environment lifecycle policy
+    |      - writes the transient Terraform root
+    |
+    v
+Smoke agni.Provider contract
+    |
+    v
+compiled dash-xd/agni provider
+    |      - materializes only requested reusable Terraform modules
+    |      - invokes Terraform unchanged
+    v
+Agni generic modules
+    regional-network
+    coreos-node
+    regional-cell
+```
+
+Agni module names and implementations are generic. They do not contain `astrochicken`, `farcaster`, `world`, `fatline`, or Logma topology policy. The same `regional-cell` module is intended to scale from the two nodes selected by Smoke to the full regional /28 composition.
 
 ## Scope
 
-Every invocation carries one of two scopes:
+Outside a named Smoke environment, Astrochicken may run Terraform lifecycle operations (`deploy`, `plan`, `destroy`, `output`). Inside `smoke env run`, the initial contract is deliberately constrained to `output`; mutation stays outside the environment boundary. Later qualification-only operations can be added without granting environment-scoped infrastructure mutation.
 
-```text
-outside
-    Smoke is not running under a named Smoke environment.
+## Terraform state
 
-environment
-    Smoke inherited SMOKE_ENV from `smoke env run`.
-```
+Astrochicken does not replace Terraform state semantics. Its persistent transient root defaults to `~/.smoke/agni/astrochicken`, or `SMOKE_ASTROCHICKEN_WORKSPACE` when explicitly set. Terraform therefore owns state and lifecycle within that root. A future remote backend can be supplied by the Smoke recipe without changing Agni's provider contract.
 
-The provider receives the environment name when scope is `environment`. Smoke does not assign permissions to either scope. The provider owns the policy. This lets a provider expose broad lifecycle operations outside an environment while deliberately limiting what can happen from inside an environment without duplicating Smoke's environment model.
+## Composition
 
-## CLI
+Smoke core never imports Agni. A client composes the Agni provider package in the normal Go-import manner. That package may blank-import `github.com/xd-dash/smoke/cmd/agni` so adding the provider also adds the `smoke agni` command.
 
-With one provider compiled in:
-
-```text
-smoke astrochicken deploy
-smoke astrochicken destroy
-```
-
-With multiple providers compiled in:
-
-```text
-smoke astrochicken --provider agni deploy
-```
-
-Arguments after provider selection are opaque to Smoke and are passed unchanged to the selected provider. This is intentional: Terraform verbs, environment names, variables, output formats, cleanup policy, and cloud-specific behavior stay in the provider.
-
-## Agni boundary
-
-For the first implementation, Agni should expose a small Go package that registers an `agni` Astrochicken provider and internally selects only Agni's `terraform/astrochicken` environment. Agni may contain other Terraform environments without making them Astrochicken-visible.
-
-The initial dependency direction should remain:
-
-```text
-Agni Astrochicken adapter
-        |
-        v
-github.com/xd-dash/smoke/astrochicken
-```
-
-Smoke must not import Agni from core packages. An Agni-aware Smoke executable opts into the adapter through normal Smoke composition.
-
-The gateway/world CoreOS topology, Quadlets, Redis transport, Nginx/Squid configuration, Logma deployment, serverless Logma round-trip, and SSE qualification all belong to the Agni environment and its qualification workflow, not to this Smoke contract.
+The provider receives a selection of Agni module names rather than an Agni environment name. This is intentional: Agni can contain other reusable modules and Terraform roots while each Smoke recipe materializes only the implementation it needs.
