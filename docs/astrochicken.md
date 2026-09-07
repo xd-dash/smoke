@@ -18,7 +18,7 @@ Smoke cmd/agni
     |      - owns gateway/world test meaning
     |      - owns execution/egress service-address meaning
     |      - owns outside-vs-environment lifecycle policy
-    |      - writes the transient Terraform root
+    |      - selects ordinary Terraform root files
     |
     v
 Smoke agni.Provider contract
@@ -36,6 +36,23 @@ Agni generic modules
     cloud-function-v1-http
     cloud-function-v2-http
 ```
+
+## Terraform source boundary
+
+Terraform configuration is source, not Go data. Astrochicken-specific policy lives as ordinary HCL under:
+
+```text
+astrochicken/terraform/
+├── main.tf
+├── variables.tf
+└── outputs.tf
+```
+
+`astrochicken.go` must not contain substantial HCL raw strings. Its job is lifecycle/scope/workspace orchestration plus selection of the generic Agni modules required by the recipe. A small asset adapter may embed/materialize the `.tf` files so an installed Smoke binary remains self-contained, but the authoritative Terraform source remains readable and editable as `.tf` files.
+
+Generic Terraform implementation belongs in Agni under `terraform/modules`, not in the Astrochicken root. The provider then composes the selected generic modules beside the Smoke-owned root and invokes the installed `terraform` executable. Terraform itself remains authoritative for parsing, planning, applying, destroying, and state semantics; Smoke and Agni must not grow a parallel HCL DSL.
+
+This also leaves room for environment-scoped Terraform tooling: a Smoke environment may carry Go tools/packages that materialize or inspect generic Terraform assets, while `terraform` remains an external runtime prerequisite available to the execution environment.
 
 Agni module names and implementations are generic. They do not contain `astrochicken`, `farcaster`, `world`, `fatline`, or Logma topology policy. A full regional deployment can use a `/28` and twelve node slots, while Astrochicken deliberately chooses the same generic modules with a `/29` and only two nodes.
 
