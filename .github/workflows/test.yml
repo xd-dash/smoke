@@ -45,6 +45,7 @@ jobs:
           SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-envs
           GOPROXY: direct
           GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/smoke-ghxd"
@@ -77,3 +78,14 @@ jobs:
           grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
 
           "$ghxd" show | grep -Fx $'environment\tghxd'
+
+          destination="$RUNNER_TEMP/ghxd-worktree"
+          result="$($smoke ghxd worktree materialize \
+            --repository xd-dash/smoke \
+            --sha "$GITHUB_SHA" \
+            --destination "$destination" \
+            --object-root "$RUNNER_TEMP/ghxd-git-components")"
+          jq -e --arg sha "$GITHUB_SHA" '.sha == $sha and .detached == true and .clean == true and (.object_database | length > 0)' <<<"$result"
+          [[ "$(git -C "$destination" rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git -C "$destination" status --porcelain)" ]]
+          [[ -z "$(git -C "$destination" symbolic-ref -q HEAD || true)" ]]
