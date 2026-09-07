@@ -21,13 +21,13 @@ A Smoke environment is a local execution composition whose dependency authority 
     └── go.sum
 ```
 
-The environment name is an operator-local role/lifecycle label. It does not imply a profile.
+The environment name is an operator-local role/lifecycle label. It does not imply an Agni profile/component.
 
 ```text
-probe
+astrochicken
+gateway
 us-west1
 experiment-7
-gateway-test
 ```
 
 are ordinary names. Smoke MUST NOT infer installation policy from them.
@@ -66,13 +66,15 @@ Terraform remains authoritative for HCL, module imports, providers, variables, b
 
 ## Installation profiles live above Smoke
 
-Smoke does not own Astrochicken, Gateway, or other installation recipes. Profiles are exact environment tools from their owning module.
+Smoke does not own Probe, Gateway, or other Agni installation components. They are exact environment tools from their owning module.
+
+Current Probe use:
 
 ```bash
-smoke env create probe
-smoke env tool add probe github.com/dash-xd/agni/cmd/astrochicken@<sha>
-smoke env tool run probe astrochicken seed <root>
-smoke env terraform probe --dir <root> -- plan
+smoke env create astrochicken
+smoke env tool add astrochicken github.com/dash-xd/agni/cmd/probe@<sha>
+smoke env tool run astrochicken probe seed <root>
+smoke env terraform astrochicken --dir <root> -- plan
 ```
 
 From Smoke's perspective a complete profile seed is one tool operation. Smoke MUST NOT require or encourage a second module-enumeration step.
@@ -82,11 +84,13 @@ The profile's own HCL/configuration declares its composition. If the profile int
 ## Environment role and profile identity are orthogonal
 
 ```text
-environment role    probe / gateway-test / us-west1 / arbitrary
-profile identity    astrochicken / gateway / future design
+environment role    astrochicken / gateway / us-west1 / arbitrary
+Agni identity       probe / gateway / future component
 ```
 
-A profile may run in many environments. An environment may gain additional tools while a design evolves. Environment names must never become hidden dependency selectors.
+`astrochicken` is therefore a valid environment name for the reusable Agni `probe` component. Environment names must never become hidden dependency selectors.
+
+A future `gateway` environment may use an Agni `gateway` profile that itself reuses Probe capabilities. The identical spelling of environment and tool is optional coincidence, not a Smoke rule.
 
 ## Seed vocabulary
 
@@ -128,7 +132,7 @@ Provider registries are for typed runtime dispatch capabilities, not build/root 
 
 Logmash remains ephemeral receive/route/callback runtime. `xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
 
-This distinction also matters to installation profiles: a transient probe may use Smoke/Logmash-style lifecycle without requiring durable Logma, while a durable Gateway profile may include Logma/Fatline as its own installation policy. Smoke core still remains agnostic.
+A transient Probe may use Smoke/Logmash-style lifecycle without requiring durable Logma, while a durable Gateway profile may include Logma/Fatline as its own installation policy. Smoke core remains agnostic.
 
 ## Cross-repository authority
 
@@ -141,7 +145,7 @@ Smoke
   generic environment/workspace/tool execution
        |
        v
-Agni installation profile
+Agni profile/component
   profile HCL/config + lifecycle + shared primitives
        |
        v
@@ -155,8 +159,9 @@ native Terraform/gcloud/Butane/QEMU
 3. Let installation profiles own their internal dependency graph.
 4. Never make operators restate profile dependencies through Smoke.
 5. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
-6. Preserve immutable snapshots and short canonical locks.
-7. Keep process-global cwd/environment mutation out of reusable execution paths.
-8. Preserve exact-source qualification outside Smoke runtime identity.
-9. Use provider registries only for genuine runtime dispatch.
-10. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
+6. Preserve environment-name/profile-identity orthogonality.
+7. Preserve immutable snapshots and short canonical locks.
+8. Keep process-global cwd/environment mutation out of reusable execution paths.
+9. Preserve exact-source qualification outside Smoke runtime identity.
+10. Use provider registries only for genuine runtime dispatch.
+11. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
