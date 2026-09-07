@@ -170,6 +170,8 @@ func runEnv(args []string) error {
 		return runEnvModule(ctx, args[1:])
 	case "tool":
 		return runEnvTool(ctx, args[1:])
+	case "terraform":
+		return terraformInEnv(ctx, args[1:])
 	case "run":
 		return runSmokeInEnv(ctx, args[1:])
 	case "exec":
@@ -222,7 +224,7 @@ func runEnvModule(ctx context.Context, args []string) error {
 
 func runEnvTool(ctx context.Context, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: smoke env tool <add|remove|list> <name> [package]")
+		return fmt.Errorf("usage: smoke env tool <add|remove|list|run> <name> [package-or-tool] [args ...]")
 	}
 	switch args[0] {
 	case "add":
@@ -252,6 +254,8 @@ func runEnvTool(ctx context.Context, args []string) error {
 			return err
 		}
 		return runCommand(workspace.Command(ctx, workspace.ToolsDir, goBin, "tool"))
+	case "run":
+		return runEnvironmentTool(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown env tool operation %q", args[0])
 	}
@@ -386,7 +390,7 @@ func runCommand(cmd *exec.Cmd) error {
 }
 
 func envUsage() error {
-	return fmt.Errorf("usage: smoke env <create|list|show|inspect|use|drop|module|tool|run|exec|shell|build> ...")
+	return fmt.Errorf("usage: smoke env <create|list|show|inspect|use|drop|module|tool|terraform|run|exec|shell|build> ...")
 }
 
 func usageError() error {

@@ -1,27 +1,32 @@
+// Package astrochicken exposes the Astrochicken Terraform recipe as ordinary
+// source assets. It is an optional environment recipe, not a compiled-in Smoke
+// command, provider, or infrastructure implementation.
 package astrochicken
 
 import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// terraformRoot contains the Astrochicken-owned Terraform root as ordinary
-// HCL files. Go only materializes these files for the selected Agni provider;
-// it does not construct Terraform configuration as string literals.
-//
 //go:embed terraform/*.tf
 var terraformRoot embed.FS
 
-func terraformFiles() (map[string][]byte, error) {
+// Materialize writes the Astrochicken Terraform root into dst. The HCL files
+// remain authoritative; this function only copies them unchanged.
+func Materialize(dst string) error {
+	dst = strings.TrimSpace(dst)
+	if dst == "" {
+		return fmt.Errorf("destination is required")
+	}
 	root, err := fs.Sub(terraformRoot, "terraform")
 	if err != nil {
-		return nil, fmt.Errorf("open Astrochicken Terraform root: %w", err)
+		return fmt.Errorf("open Astrochicken Terraform root: %w", err)
 	}
-
-	files := map[string][]byte{}
+	count := 0
 	err = fs.WalkDir(root, ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -36,14 +41,21 @@ func terraformFiles() (map[string][]byte, error) {
 		if err != nil {
 			return err
 		}
-		files[filepath.ToSlash(path)] = data
+		target := filepath.Join(dst, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			return err
+		}
+		count++
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read Astrochicken Terraform root: %w", err)
+		return fmt.Errorf("materialize Astrochicken Terraform root: %w", err)
 	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("Astrochicken Terraform root is empty")
+	if count == 0 {
+		return fmt.Errorf("Astrochicken Terraform root is empty")
 	}
-	return files, nil
+	return nil
 }

@@ -1,129 +1,104 @@
-# Agni / Astrochicken composition
+# Astrochicken environment recipe
 
-Astrochicken is Smoke domain vocabulary. Agni does not implement an Astrochicken environment or Terraform root.
+Astrochicken is a named Smoke environment/recipe, not a compiled-in Smoke command and not an Agni provider.
 
-The composed command is:
-
-```text
-smoke agni astrochicken deploy
-```
-
-The dependency boundary is:
+Its responsibility is to compose ordinary Terraform source with generic Agni Terraform modules and environment-specific policy:
 
 ```text
-Smoke cmd/agni
-    |
-    +-- Smoke Astrochicken recipe
-    |      - chooses a two-node representative topology
-    |      - owns gateway/world test meaning
-    |      - owns execution/egress service-address meaning
-    |      - owns outside-vs-environment lifecycle policy
-    |      - selects ordinary Terraform root files
-    |
-    v
-Smoke agni.Provider contract
-    |
-    v
-compiled dash-xd/agni provider
-    |      - materializes only requested reusable Terraform modules
-    |      - invokes Terraform unchanged
-    v
-Agni generic modules
-    regional-network
-    regional-internal-addresses
-    coreos-node
-    regional-cell
-    cloud-function-v1-http
-    cloud-function-v2-http
+Astrochicken recipe
+    +-- ordinary .tf root
+    +-- Smoke environment/tool graph
+    +-- Agni generic Terraform modules
+    `-- native terraform executable
 ```
 
-## Terraform source boundary
+## Bootstrap
 
-Terraform configuration is source, not Go data. Astrochicken-specific policy lives as ordinary HCL under:
+The transitional recipe source still lives in this repository so an exact Smoke SHA can identify both the Smoke runtime and the recipe tool. It is exposed through the optional Go tool `github.com/xd-dash/smoke/cmd/astrochicken-root` rather than linked into the stock Smoke binary.
+
+```bash
+smoke env create astrochicken
+
+smoke env tool add astrochicken \
+  github.com/xd-dash/smoke/cmd/astrochicken-root@<smoke-sha>
+
+smoke env tool add astrochicken \
+  github.com/dash-xd/agni/cmd/agni-terraform@<agni-sha>
+```
+
+Materialize an ordinary Terraform root:
+
+```bash
+root="$PWD/.astrochicken-tf"
+
+smoke env tool run astrochicken astrochicken-root "$root"
+
+smoke env tool run astrochicken agni-terraform materialize \
+  --module regional-network \
+  --module regional-internal-addresses \
+  --module coreos-node \
+  --module regional-cell \
+  --module cloud-function-v1-http \
+  --module cloud-function-v2-http \
+  "$root"
+```
+
+Then use generic Terraform execution:
+
+```bash
+smoke env terraform astrochicken --dir "$root" -- init
+smoke env terraform astrochicken --dir "$root" -- plan
+smoke env terraform astrochicken --dir "$root" -- apply
+smoke env terraform astrochicken --dir "$root" -- output
+smoke env terraform astrochicken --dir "$root" -- destroy
+```
+
+No Terraform lifecycle operation is implemented by Astrochicken Go code.
+
+## Network recipe
+
+The HCL currently describes a representative `/29` regional cell:
 
 ```text
-astrochicken/terraform/
-├── main.tf
-├── variables.tf
-└── outputs.tf
+host offset 2  gateway node primary
+host offset 3  world node primary
+host offset 4  execution service alias
+host offset 5  egress service alias
 ```
 
-`astrochicken.go` must not contain substantial HCL raw strings. Its job is lifecycle/scope/workspace orchestration plus selection of the generic Agni modules required by the recipe. A small asset adapter may embed/materialize the `.tf` files so an installed Smoke binary remains self-contained, but the authoritative Terraform source remains readable and editable as `.tf` files.
+The recipe enables Private Google Access and may add internal-only Gen1/Gen2 shadow functions. Those are Astrochicken policy choices expressed in the ordinary Terraform root. Agni only supplies generic modules.
 
-Generic Terraform implementation belongs in Agni under `terraform/modules`, not in the Astrochicken root. The provider then composes the selected generic modules beside the Smoke-owned root and invokes the installed `terraform` executable. Terraform itself remains authoritative for parsing, planning, applying, destroying, and state semantics; Smoke and Agni must not grow a parallel HCL DSL.
-
-This also leaves room for environment-scoped Terraform tooling: a Smoke environment may carry Go tools/packages that materialize or inspect generic Terraform assets, while `terraform` remains an external runtime prerequisite available to the execution environment.
-
-Agni module names and implementations are generic. They do not contain `astrochicken`, `farcaster`, `world`, `fatline`, or Logma topology policy. A full regional deployment can use a `/28` and twelve node slots, while Astrochicken deliberately chooses the same generic modules with a `/29` and only two nodes.
-
-## Astrochicken network
-
-The Smoke recipe requires an IPv4 `/29`. Google Cloud reserves four addresses, leaving four usable addresses. Astrochicken gives all four an explicit Smoke-owned role:
-
-```text
-host offset 2  gateway node primary address
-host offset 3  world node primary address
-host offset 4  execution service address -> gateway alias /32
-host offset 5  egress service address    -> gateway alias /32
-```
-
-The execution and egress addresses are reserved as static internal GCE addresses before the gateway VM is created. They are then attached to the gateway network interface as alias `/32`s. Smoke names the intended service roles: the execution address is available for an Nginx-facing execution frontend and the egress address is available for a Squid-facing egress frontend. Agni only knows that the addresses are reserved and attached as aliases.
-
-The guest OS/workload must still configure the alias addresses locally before binding a process to the literal IP. That workload configuration is deliberately separate from the Terraform address-allocation primitive.
-
-The regional subnet is dual-stack and enables Private Google Access. These service addresses remain Farcaster-owned regional identities; serverless functions do not consume them.
-
-## Shadow serverless functions
-
-The Astrochicken root can optionally deploy maps of 1st-gen and 2nd-gen HTTP functions from caller-supplied Cloud Storage source objects. Both use `ALLOW_INTERNAL_ONLY` ingress. The probe VM service account is automatically included as an invoker when `service_account_email` is set; additional IAM principals can be supplied through `function_invoker_members`.
-
-This gives the intended request boundary:
+## Request topology
 
 ```text
 public caller
     -> Cloudflare
-    -> gateway/world VM
-       -> Nginx execution frontend
-          -> local gospace / pyspace / simple-router-builder execution
-          -> or authenticated internal invocation of GCF Gen1 / Gen2
-    <- function/local response
+    -> Farcaster VM
+       -> local gospace / pyspace / simple-router-builder
+       -> or authenticated internal Gen1 / Gen2 shadow
+    <- response
     <- VM
     <- Cloudflare
-    <- public caller
 ```
 
-The execution service address is not the Cloud Function address. It is the stable Farcaster-side frontend that may choose local execution or invoke a serverless shadow. Likewise, the egress service address is a Farcaster-owned identity suitable for Squid policy. The Cloud Functions remain behind Google's serverless frontend and are invoked over the VPC/private Google path.
+The `.4`/`.5` service addresses remain Farcaster-owned VM aliases. They are not Cloud Function addresses.
 
-The function response returning through the VM does not require the function itself to accept public ingress. For 2nd-gen functions, invocation IAM is `roles/run.invoker`; 1st-gen uses `roles/cloudfunctions.invoker`.
-
-The function maps default empty, so `smoke agni astrochicken deploy` can deploy only the `/29`, service-address reservations, and two CoreOS nodes. Supplying `gen1_functions` and/or `gen2_functions` through normal Terraform variables adds the shadow functions without changing the Smoke command or Agni module boundary.
-
-## Runtime placement boundary
-
-Smoke owns qualification vocabulary for the logical execution provider, but the workload should preserve one HTTP-shaped contract across placements:
+## Responsibility boundary
 
 ```text
-logical handler
-    -> local Go executor
-    -> local Python executor
-    -> Gen1 executor
-    -> Gen2 executor
+Smoke
+  environment creation, immutable Go workspace/tool snapshots,
+  generic `go tool` and Terraform child execution
+
+Agni
+  generic reusable Terraform modules and `agni-terraform` materializer
+
+Astrochicken
+  ordinary Terraform root and domain policy
+
+Huram
+  exact Smoke/Agni/recipe identities, credentials, tfvars/backend inputs,
+  qualification evidence, plan/apply authorization, promotion
 ```
 
-A gateway may therefore send a cold request to a serverless shadow while warming the local implementation, then serve later requests locally. It may also choose serverless because of load, policy, or a serverless-only marker. The caller remains unaware of placement.
-
-Application authentication terminates at the Farcaster layer. Farcaster uses its VM service account and Google IAM authentication for the internal function hop; public clients do not need Google credentials.
-
-## Scope
-
-Outside a named Smoke environment, Astrochicken may run Terraform lifecycle operations (`deploy`, `plan`, `destroy`, `output`). Inside `smoke env run`, the initial contract is deliberately constrained to `output`; mutation stays outside the environment boundary. Later qualification-only operations can be added without granting environment-scoped infrastructure mutation.
-
-## Terraform state
-
-Astrochicken does not replace Terraform state semantics. Its persistent transient root defaults to `~/.smoke/agni/astrochicken`, or `SMOKE_ASTROCHICKEN_WORKSPACE` when explicitly set. Terraform therefore owns state and lifecycle within that root. A future remote backend can be supplied by the Smoke recipe without changing Agni's provider contract.
-
-## Composition
-
-Smoke core never imports Agni. A client composes the Agni provider package in the normal Go-import manner. That package may blank-import `github.com/xd-dash/smoke/cmd/agni` so adding the provider also adds the `smoke agni` command.
-
-The provider receives a selection of Agni module names rather than an Agni environment name. This is intentional: Agni can contain other reusable modules and Terraform roots while each Smoke recipe materializes only the implementation it needs.
+The eventual clean endpoint is for the Astrochicken recipe/tool to live in its own module or repository. Moving it later must not require changes to Smoke environment or Agni tool semantics.
