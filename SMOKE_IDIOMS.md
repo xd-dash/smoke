@@ -40,9 +40,20 @@ are ordinary names. Smoke MUST NOT infer installation policy from them.
 - Canonical mutation remains protected by the environment lock.
 - Long-running children use immutable content-addressed snapshots after releasing the canonical lock.
 - Equal Go workspace/tool state reuses the same snapshot.
-- Child activation uses `GOWORK`, `SMOKE_ENV`, and workspace identity rather than process-global cwd/environment mutation.
+- Child activation uses `GOWORK`, `SMOKE_ENV`, and explicit snapshot identity rather than process-global cwd/environment mutation.
 
-External roots such as Terraform installations remain profile/caller-owned until an explicit future root primitive includes them in the Smoke digest.
+The child environment contract is:
+
+```text
+SMOKE_ENV             local environment name
+SMOKE_ENV_WORKSPACE   immutable snapshot directory
+SMOKE_ENV_WORKFILE    immutable snapshot go.work path
+GOWORK                immutable snapshot go.work path
+```
+
+`SMOKE_ENV_WORKSPACE` MUST remain a directory. Do not overload it with the `go.work` file path. This keeps the contract compatible with a future declared `roots/` area inside the same content-addressed snapshot.
+
+External roots such as Terraform installations remain profile/caller-owned until an explicit future root primitive includes them in the Smoke digest. Until then, the Smoke digest identifies only Go workspace/tool state.
 
 ## Generic tool execution
 
@@ -132,7 +143,7 @@ Provider registries are for typed runtime dispatch capabilities, not build/root 
 
 Logmash remains ephemeral receive/route/callback runtime. `xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
 
-A transient Probe may use Smoke/Logmash-style lifecycle without requiring durable Logma, while a durable Gateway profile may include Logma/Fatline as its own installation policy. Smoke core remains agnostic.
+Probe owns its own transient systemd lifecycle and does not depend semantically on Smoke. A durable Gateway profile may include Logma/Fatline as installation policy. Smoke core remains agnostic to both designs.
 
 ## Cross-repository authority
 
@@ -156,11 +167,11 @@ native Terraform/gcloud/Butane/QEMU
 
 1. Keep Smoke generic; profile names do not enter Smoke core.
 2. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
-3. Let installation profiles own their internal dependency graph.
+3. Let installation profiles own their internal dependency graph and infrastructure metadata.
 4. Never make operators restate profile dependencies through Smoke.
 5. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
 6. Preserve environment-name/profile-identity orthogonality.
-7. Preserve immutable snapshots and short canonical locks.
+7. Preserve immutable snapshots, short canonical locks, and the directory/file distinction between `SMOKE_ENV_WORKSPACE` and `SMOKE_ENV_WORKFILE`.
 8. Keep process-global cwd/environment mutation out of reusable execution paths.
 9. Preserve exact-source qualification outside Smoke runtime identity.
 10. Use provider registries only for genuine runtime dispatch.
