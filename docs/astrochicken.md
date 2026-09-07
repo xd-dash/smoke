@@ -14,16 +14,16 @@ Astrochicken recipe
 
 ## Bootstrap
 
-The transitional recipe source still lives in this repository so an exact Smoke SHA can identify both the Smoke runtime and the recipe tool. It is exposed through the optional Go tool `github.com/xd-dash/smoke/cmd/astrochicken-root` rather than linked into the stock Smoke binary.
+The transitional recipe source still lives in this repository so an exact Smoke SHA can identify both the Smoke runtime and recipe tool. The optional tool is intentionally named only `astrochicken`; the environment/module path already provides the remaining context.
 
 ```bash
 smoke env create astrochicken
 
 smoke env tool add astrochicken \
-  github.com/xd-dash/smoke/cmd/astrochicken-root@<smoke-sha>
+  github.com/xd-dash/smoke/cmd/astrochicken@<smoke-sha>
 
 smoke env tool add astrochicken \
-  github.com/dash-xd/agni/cmd/agni-terraform@<agni-sha>
+  github.com/dash-xd/agni/cmd/tf@<agni-sha>
 ```
 
 Seed the ordinary Terraform root from exact recipe/module sources:
@@ -31,9 +31,9 @@ Seed the ordinary Terraform root from exact recipe/module sources:
 ```bash
 root="$PWD/.astrochicken-tf"
 
-smoke env tool run astrochicken astrochicken-root seed "$root"
+smoke env tool run astrochicken astrochicken seed "$root"
 
-smoke env tool run astrochicken agni-terraform seed \
+smoke env tool run astrochicken tf seed \
   --module regional-network \
   --module regional-internal-addresses \
   --module coreos-node \
@@ -57,7 +57,7 @@ No Terraform lifecycle operation is implemented by Astrochicken Go code.
 
 ## Seed semantics
 
-`seed` is the same preparation idiom used by `github-worktree seed`: an exact source/tool writes authoritative source into a caller-owned destination. It does not create another dependency graph or reinterpret the source language.
+`seed` is a shared preparation verb, not a shared provider or implementation. Astrochicken seeding copies its recipe source. Agni `tf seed` copies selected embedded Terraform modules. ghxd worktree seeding performs Git/worktree operations. None depends on the others.
 
 ## Network recipe
 
@@ -72,21 +72,6 @@ host offset 5  egress service alias
 
 The recipe enables Private Google Access and may add internal-only Gen1/Gen2 shadow functions. Those are Astrochicken policy choices expressed in the ordinary Terraform root. Agni only supplies generic modules.
 
-## Request topology
-
-```text
-public caller
-    -> Cloudflare
-    -> Farcaster VM
-       -> local gospace / pyspace / simple-router-builder
-       -> or authenticated internal Gen1 / Gen2 shadow
-    <- response
-    <- VM
-    <- Cloudflare
-```
-
-The `.4`/`.5` service addresses remain Farcaster-owned VM aliases. They are not Cloud Function addresses.
-
 ## Responsibility boundary
 
 ```text
@@ -95,7 +80,7 @@ Smoke
   generic `go tool` and Terraform child execution
 
 Agni
-  generic reusable Terraform modules and `agni-terraform seed`
+  generic reusable Terraform modules and independent `tf seed`
 
 Astrochicken
   ordinary Terraform root and domain policy
