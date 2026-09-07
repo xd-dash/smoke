@@ -15,9 +15,9 @@ import (
 //go:embed terraform/*.tf
 var terraformRoot embed.FS
 
-// Materialize writes the Astrochicken Terraform root into dst. The HCL files
-// remain authoritative; this function only copies them unchanged.
-func Materialize(dst string) error {
+// Seed writes the Astrochicken Terraform root into dst. The HCL files remain
+// authoritative; seeding only copies the exact recipe source unchanged.
+func Seed(dst string) error {
 	dst = strings.TrimSpace(dst)
 	if dst == "" {
 		return fmt.Errorf("destination is required")
@@ -52,7 +52,7 @@ func Materialize(dst string) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("materialize Astrochicken Terraform root: %w", err)
+		return fmt.Errorf("seed Astrochicken Terraform root: %w", err)
 	}
 	if count == 0 {
 		return fmt.Errorf("Astrochicken Terraform root is empty")
