@@ -16,6 +16,49 @@ Smoke is a self-composed Go executable, not a runtime plugin host.
 
 The default composition imports `github.com/xd-dash/smoke/cmd/logmash`. The system Go toolchain remains the composition/rebuild primitive.
 
+## Stock binary, internal tools, and default bootstrap
+
+The stock `cmd/smoke` binary intentionally has both compiled behavior and workspace-backed tooling. These are different mechanisms and must remain distinguishable.
+
+```text
+stock Smoke executable
+├── compiled Logmash command
+└── built-in ghxd orchestration
+    ├── workspace bootstrap/tool execution
+    └── internal GitHub capability
+        └── worktree seed
+
+named ghxd workspace
+├── github-cdn
+└── github-device-auth
+```
+
+Rules:
+
+- `ghxd` is a built-in Smoke operator namespace. It is available before a `ghxd` environment exists.
+- `smoke ghxd worktree seed` is an internal Go capability linked into Smoke and must not require `smoke ghxd bootstrap`.
+- `smoke ghxd tool ...` and the current `smoke ghxd auth device|poll|refresh` façade execute external Go tools and therefore require a bootstrapped `ghxd` workspace.
+- `smoke ghxd bootstrap` is the default GitHub workspace bootstrap. It is idempotent and may be called unconditionally by CI/Huram/operator workflows.
+- The default `ghxd` workspace contains ordinary external Go tools (`github-cdn`, `github-device-auth`). Internal Smoke capabilities must not be duplicated into that workspace merely for discoverability.
+- Mature external tools remain ordinary tools. Do not compile them into stock Smoke merely because a built-in façade invokes them.
+- Conversely, reusable orchestration behavior that belongs to Smoke may live as an ordinary package under `ghxd/<capability>` and be linked into the stock binary without becoming a workspace tool.
+- Runtime credentials are inherited inputs. Access tokens, refresh tokens, repository targets, organization policy, and exact qualification choices must never be persisted in Smoke workspace state.
+
+The three identities remain separate:
+
+```text
+composition identity
+    = compiled optional command/provider imports
+
+built-in core/operator surface
+    = Smoke code shipped by the selected Smoke module version/SHA
+
+workspace identity
+    = immutable snapshot of named Go workspace/tool state
+```
+
+A built-in core/operator capability does not need to appear in the composition component list unless it is itself selected through the optional composition mechanism. Exact Smoke SHA/build qualification remains the external authority for which built-in implementation was executed.
+
 ## Package direction
 
 Keep dependencies pointed inward toward small core contracts:
@@ -32,11 +75,11 @@ local composition
   final smoke binary
 ```
 
-Core packages must not import every optional provider merely to make them discoverable. The composition root remains the authority for what is linked.
+Core packages must not import every optional provider merely to make them discoverable. The composition root remains the authority for what is linked through optional composition. Built-in Smoke application/operator code may depend on small in-module packages that are part of the stock Smoke implementation; that is not runtime provider discovery.
 
 ## Runtime identity and inspection
 
-Smoke has two distinct runtime identities:
+Smoke has two distinct runtime identities exposed directly by the runtime:
 
 ```text
 composition digest
@@ -50,9 +93,11 @@ Together they identify the two axes relevant to a smoke-test runtime:
 
 ```text
 (composition digest, workspace digest)
-        = what Smoke could do
-          + what Go workspace/tool state it saw
+        = selected optional composition
+          + Go workspace/tool state
 ```
+
+The exact Smoke source/build SHA is a separate qualification identity owned by the caller/workflow and is especially important for built-in operator behavior such as `ghxd/worktree`.
 
 Rules:
 
@@ -127,9 +172,9 @@ smoke env
     = which local modules/tools are active while that binary is used
 ```
 
-An environment cannot make an optional command available unless that command is already linked into the current binary.
+An environment cannot make an optional command available unless that command is already linked into the current binary. A built-in Smoke/ghxd capability, however, is already part of the selected Smoke implementation and does not become optional merely because no workspace has been bootstrapped.
 
-Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the compiled Logmash handler; it must not resolve or install a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot.
+Logmash follows the composition rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the compiled Logmash handler; it must not resolve or install a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot.
 
 A running Smoke process and the installed Smoke filesystem entry are distinct after atomic recomposition. A re-exec racing with a completed replacement may start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is introduced.
 
@@ -302,17 +347,20 @@ Do not make Logmash secretly depend on the durable Logma HTTP control plane mere
 When modifying Smoke/Logmash:
 
 1. Preserve the smallest composition primitive that satisfies the requirement.
-2. Prefer import-time composition over runtime discovery.
-3. Prefer context cancellation and ownership over shared mutable state.
-4. Keep process-global cwd/environment mutation out of reusable execution paths.
-5. Serialize shared on-disk transitions across processes, not merely goroutines.
-6. Prefer immutable runtime snapshots over long-lived canonical-state locks.
-7. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
-8. Keep stdout default and attached unless explicitly removed.
-9. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
-10. Keep DNS discovery free of credentials and runtime dataset/channel state.
-11. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, or rebuild invariants touched by the change.
-12. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
-13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+2. Prefer import-time composition over runtime discovery for optional compiled commands/providers.
+3. Keep built-in core/operator capabilities distinct from external workspace tools; do not duplicate one into the other without a concrete reason.
+4. Keep `smoke ghxd bootstrap` idempotent and safe for unconditional default GitHub-tool setup.
+5. Do not make internal `ghxd` capabilities depend on workspace bootstrap unless their actual implementation executes a workspace tool.
+6. Prefer context cancellation and ownership over shared mutable state.
+7. Keep process-global cwd/environment mutation out of reusable execution paths.
+8. Serialize shared on-disk transitions across processes, not merely goroutines.
+9. Prefer immutable runtime snapshots over long-lived canonical-state locks.
+10. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
+11. Keep stdout default and attached unless explicitly removed.
+12. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+13. Keep DNS discovery free of credentials and runtime dataset/channel state.
+14. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, rebuild, ghxd internal capability, or bootstrap invariants touched by the change.
+15. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
+16. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, or another bootstrap layer, first verify that the requirement cannot be expressed through existing Go composition, built-in Smoke/ghxd behavior, `go.work`/`go.mod`, the idempotent `ghxd` tool bootstrap, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
