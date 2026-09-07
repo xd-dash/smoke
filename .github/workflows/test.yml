@@ -39,7 +39,7 @@ jobs:
           work="$SMOKE_ENV_DIR/native/go.work"
           grep -F 'github.com/dash-xd/github-cdn@' <<<"$(go env GOMODCACHE >/dev/null; printf '%s' "$resolved")"
           GOWORK="$work" go work edit -json >/dev/null
-      - name: Verify ghxd GitHub tool environment
+      - name: Verify default Logmash composition and ghxd workspace
         shell: bash
         env:
           SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-envs
@@ -52,15 +52,23 @@ jobs:
           go build -o "$smoke" ./cmd/smoke
           go build -o "$ghxd" ./cmd/ghxd
 
+          "$smoke" commands | grep -Fx logmash
+          "$smoke" commands | grep -Fx ghxd
+
           "$smoke" ghxd show | grep -Fx $'environment\tghxd'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-cdn@go'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@main'
 
           "$smoke" ghxd bootstrap
+          "$smoke" ghxd bootstrap
           tools="$SMOKE_ENV_DIR/ghxd/tools/go.mod"
           grep -F 'github.com/dash-xd/github-cdn' "$tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$tools"
           ! grep -F 'github.com/dash-xd/agni' "$tools"
+
+          tool_list="$("$smoke" env tool list ghxd)"
+          grep -F github-cdn <<<"$tool_list"
+          grep -F github-device-auth <<<"$tool_list"
 
           "$smoke" env create provider-test
           "$smoke" ghxd apply provider-test
