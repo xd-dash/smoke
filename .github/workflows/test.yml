@@ -44,7 +44,7 @@ jobs:
         env:
           SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-envs
           GOPROXY: direct
-          GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth
+          GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth,github.com/xd-dash/smoke
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -59,23 +59,27 @@ jobs:
           "$smoke" ghxd show | grep -Fx $'environment\tghxd'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-cdn@go'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@main'
+          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c'
 
           "$smoke" ghxd bootstrap
           "$smoke" ghxd bootstrap
           tools="$SMOKE_ENV_DIR/ghxd/tools/go.mod"
           grep -F 'github.com/dash-xd/github-cdn' "$tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$tools"
+          grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$tools"
           ! grep -F 'github.com/dash-xd/agni' "$tools"
 
           tool_list="$("$smoke" env tool list ghxd)"
           grep -F github-cdn <<<"$tool_list"
           grep -F github-device-auth <<<"$tool_list"
+          grep -F github-worktree <<<"$tool_list"
 
           "$smoke" env create provider-test
           "$smoke" ghxd apply provider-test
           provider_tools="$SMOKE_ENV_DIR/provider-test/tools/go.mod"
           grep -F 'github.com/dash-xd/github-cdn' "$provider_tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
+          grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$provider_tools"
 
           "$ghxd" show | grep -Fx $'environment\tghxd'
 

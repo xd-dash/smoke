@@ -1,42 +1,33 @@
 # ghxd
 
-`ghxd` is Smoke's optional, Go-native GitHub tool environment. It is the stable GitHub composition surface for provider and operator workflows.
-
-It intentionally lives inside the `xd-dash/smoke` Go module. `gh` means GitHub here: other Git providers should live beside `ghxd` as separate provider/tool environments rather than underneath it.
+`ghxd` is Smoke's optional, Go-native GitHub tool environment and stable GitHub operator surface. `gh` means GitHub: other Git providers belong beside `ghxd`, not underneath it.
 
 ## Default Smoke shape
 
-The stock Smoke binary compiles Logmash and exposes `ghxd` as its GitHub tool workspace bootstrap:
-
-```text
-cmd/smoke
-├── compiled Logmash command
-└── ghxd workspace orchestration
-```
-
-The two axes remain distinct:
+The stock Smoke binary compiles Logmash and includes the `ghxd` orchestration commands. External GitHub capabilities live in the default `ghxd` Go workspace:
 
 ```text
 Smoke composition
-    └── logmash
+├── logmash
+└── ghxd orchestration
 
-Smoke workspace
-    └── ghxd
-        ├── github-cdn
-        └── github-device-auth
+Smoke workspace: ghxd
+├── github-cdn
+├── github-device-auth
+└── github-worktree
 ```
 
-This preserves the existing rule that compiled Smoke capabilities and Go workspace/tool state are separate identities.
+Composition identity and workspace identity remain separate. The `ghxd` command surface being present in the binary does not mean its external tools have been installed yet.
 
 ## Bootstrap
 
-The shortest path is:
+The normal GitHub bootstrap is:
 
 ```bash
 smoke ghxd bootstrap
 ```
 
-This ensures the default Smoke environment named `ghxd` exists and installs or updates the GitHub tools using the same native Go mechanism as `smoke env tool add`:
+It idempotently ensures the default environment named `ghxd` exists and composes the GitHub tools using the same native Go tool mechanism as `smoke env tool add`:
 
 ```text
 smoke ghxd bootstrap
@@ -44,65 +35,74 @@ smoke ghxd bootstrap
         v
 Smoke environment: ghxd
         |
-        +-- go get -tool github.com/dash-xd/github-cdn@go
-        +-- go get -tool github.com/dash-xd/github-device-auth/cmd/github-device-auth@main
+        +-- github-cdn
+        +-- github-device-auth
+        +-- github-worktree
         |
         v
 immutable Smoke workspace snapshots
 ```
 
-Bootstrap is idempotent and may be repeated by CI or operator workflows.
+`github-worktree` is an ordinary installable Go tool backed by the reusable `ghxd/worktree` package. Its default tool spec is pinned to an exact qualified Smoke commit rather than a movable `main` selector, so an older Smoke binary cannot silently bootstrap a newer seeding implementation.
 
-Inspect the composition without creating anything:
+Inspect the intended default tool set without mutating anything:
 
 ```bash
 smoke ghxd show
 ```
 
-Use another environment name when useful:
+Use another environment when useful:
 
 ```bash
 smoke ghxd bootstrap github-operator
 ```
 
-Or add the GitHub toolset to an environment that already exists:
+or apply the same GitHub tool set to an existing environment:
 
 ```bash
 smoke env create dev
 smoke ghxd apply dev
 ```
 
-## Running GitHub tools through Smoke
+## One execution model
 
-`ghxd` tools are executed through an immutable Smoke workspace snapshot:
-
-```bash
-smoke ghxd tool github-cdn snapshot xd-dash huram-abi-master automation
-```
-
-A non-default environment may be selected explicitly:
+After bootstrap, GitHub tools are always executed through an immutable Smoke workspace snapshot. The high-level façades and the generic tool command use the same underlying path:
 
 ```bash
-smoke ghxd tool --env github-operator github-cdn ...
-```
-
-Runtime credentials are inherited by the child process. They are not persisted in the Smoke environment. For example, `github-cdn` consumes `GH_TOKEN` / `GITHUB_TOKEN` normally.
-
-## GitHub authentication
-
-Authentication is a GitHub capability family within `ghxd`, not a generic forge adapter. The current device-auth tool is exposed through a thin Smoke façade:
-
-```bash
+smoke ghxd tool github-cdn ...
 smoke ghxd auth device <client-id>
 smoke ghxd auth poll <client-id> <device-code>
 smoke ghxd auth refresh <client-id> <refresh-token> [client-secret]
+smoke ghxd worktree seed --repository owner/repo --sha <sha> --destination <path>
 ```
 
-These commands forward to the installed `github-device-auth` Go tool inside the immutable `ghxd` workspace. Smoke does not reimplement GitHub's OAuth/device protocol.
+A non-default workspace can be selected consistently:
 
-## Exact worktree seeding
+```bash
+smoke ghxd tool --env github-operator github-cdn ...
+smoke ghxd auth --env github-operator device <client-id>
+smoke ghxd worktree --env github-operator seed ...
+```
 
-Reusable GitHub worktree mechanics live in the ordinary Go package `github.com/xd-dash/smoke/ghxd/worktree`. The operator surface is:
+These façades do not reimplement the external tool semantics. They resolve the selected `ghxd` environment, take an immutable snapshot, and execute the installed Go tool inside that snapshot.
+
+Runtime credentials are inherited by child execution and are never persisted in Smoke workspace state. `GH_TOKEN`, access tokens, and refresh tokens remain runtime inputs.
+
+## Worktree seed contract
+
+The reusable library remains:
+
+```text
+github.com/xd-dash/smoke/ghxd/worktree
+```
+
+The installable tool is:
+
+```text
+github.com/xd-dash/smoke/cmd/github-worktree
+```
+
+The user-facing Smoke surface remains:
 
 ```bash
 smoke ghxd worktree seed \
@@ -112,49 +112,28 @@ smoke ghxd worktree seed \
   --destination /tmp/example
 ```
 
-The exact SHA is execution authority. `--role-ref` is fetched independently and, when present, only verifies that the requested SHA is equal to or an ancestor of the current role-ref head. It can never replace the requested SHA.
+The exact SHA is execution authority. `--role-ref` is provenance only: it is fetched independently and may verify that the requested SHA is equal to or an ancestor of the current role-ref head, but it never replaces the requested SHA.
 
-The primitive maintains one shared bare object database per GitHub repository, fetches the exact commit, optionally verifies role-ref ancestry, seeds a detached worktree, then verifies exact HEAD identity and cleanliness before returning JSON. `GH_TOKEN` is read at runtime by default and is never persisted into Smoke state or included as a command argument.
+The tool maintains one shared bare object database per GitHub repository, fetches the exact commit, optionally verifies role-ref ancestry, seeds a detached worktree, then verifies exact HEAD identity and cleanliness before returning JSON. `GH_TOKEN` is read at runtime by default and is never written into Smoke state or evidence.
 
-The returned JSON is transport-neutral execution evidence from the primitive. Organization-specific evidence schemas remain with the caller. Huram, for example, wraps the result in its `huram.git_component_seed` evidence instead of making that schema part of Smoke.
+The returned JSON is generic execution evidence. Organization-specific evidence schemas remain with callers such as Huram.
 
-The intended growth shape is:
+## Capability growth
 
-```text
-ghxd/
-├── auth/
-│   ├── device/     # current device-flow capability
-│   ├── oauth/      # when reusable behavior exists
-│   ├── wif/        # when reusable behavior exists
-│   └── ...
-├── cdn/
-├── worktree/       # reusable exact-Git seeding
-├── webhook/
-└── workflow/
-```
-
-Do not create empty packages merely to reserve names. Add a package when reusable Go behavior exists.
-
-## Provider direction
-
-`ghxd` is itself the GitHub provider/tool environment.
+The conceptual GitHub capability families are:
 
 ```text
-Huram credential/bootstrap authority
-        |
-        | runtime access/refresh token
-        v
-Smoke
-        |
-        v
-      ghxd
-     /    |     \
- auth    cdn   worktree
+ghxd
+├── auth
+├── cdn
+├── worktree
+├── webhook
+└── workflow
 ```
 
-No token, organization name, tenant value, repository target, project ID, or other business-specific value belongs in `ghxd`.
+Do not create empty packages merely to reserve those names. Add reusable Go libraries/tools only when real behavior exists.
 
-Other Git providers, if needed later, sit at the same level as `ghxd`:
+Other Git providers, if needed later, remain siblings:
 
 ```text
 Smoke
@@ -165,10 +144,12 @@ Smoke
 
 No forge-neutral provider framework is required in advance.
 
-## Go owns the composition
+## Ownership
 
-Every current `ghxd` component is ordinary Go package/tool behavior, so Go remains authoritative for module queries, pseudo-versions, downloads, checksums, `go.mod`, tool directives, and reusable worktree implementation.
+Go owns module queries, pseudo-versions, checksums, `go.mod`, `go.sum`, `go.work`, tool directives, and ordinary reusable Go implementations.
 
-Smoke owns only environment, snapshot, execution, and GitHub operator orchestration lifecycle.
+Smoke owns named environments, immutable snapshots, and the GitHub operator façades that execute those tools.
 
-Do not introduce Android Repo merely because GitHub capabilities originate in multiple Go repositories. Repo is only relevant if a final composition genuinely spans independently versioned non-Go ecosystems that cannot naturally remain one Go dependency/tool graph.
+Huram owns credentials, exact candidate selection, organization-specific evidence, qualification, and promotion.
+
+Do not introduce Android Repo merely because GitHub capabilities originate in multiple Go repositories. Use native Go composition while the final graph remains Go-native.
