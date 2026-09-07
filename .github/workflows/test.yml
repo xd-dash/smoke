@@ -18,3 +18,24 @@ jobs:
           cache: true
       - run: go vet ./...
       - run: go test -race ./...
+      - name: Verify Go-native module workspace composition
+        shell: bash
+        env:
+          SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-envs
+          GOPROXY: direct
+          GONOSUMDB: github.com/dash-xd/github-cdn
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/smoke"
+          go build -o "$smoke" ./cmd/smoke
+
+          "$smoke" env create native
+          resolved="$("$smoke" env module add native github.com/dash-xd/github-cdn@go)"
+          [[ "$resolved" == github.com/dash-xd/github-cdn@v* ]]
+
+          modules="$("$smoke" env module list native)"
+          grep -F 'github.com/dash-xd/github-cdn' <<<"$modules"
+
+          work="$SMOKE_ENV_DIR/native/go.work"
+          grep -F 'github.com/dash-xd/github-cdn@' <<<"$(go env GOMODCACHE >/dev/null; printf '%s' "$resolved")"
+          GOWORK="$work" go work edit -json >/dev/null
