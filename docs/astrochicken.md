@@ -1,14 +1,15 @@
 # Astrochicken through Smoke
 
-Astrochicken is an Agni installation profile used through a generic Smoke environment. Smoke does not own the profile implementation.
+Astrochicken is an Agni installation profile used through a generic Smoke environment. Smoke does not own the profile implementation or its internal Terraform module graph.
 
 ```text
 Smoke environment
     |
     `-- github.com/dash-xd/agni/cmd/astrochicken
             |
-            +-- Astrochicken Terraform/config root
-            `-- shared Agni modules selected by the profile
+            +-- Astrochicken HCL/config
+            +-- transient probe lifecycle policy
+            `-- shared Agni Terraform library
                     |
                     `-- native Terraform
 ```
@@ -30,7 +31,7 @@ root="$PWD/.probe-tf"
 smoke env tool run probe astrochicken seed "$root"
 ```
 
-The profile owns its shared-module dependency graph. There is no second `tf seed --module ...` command.
+There is no second `tf seed --module ...` command. Astrochicken's Terraform source declares its module imports; the profile seed merely makes Agni's shared module library available under `modules/`.
 
 Then invoke native Terraform through Smoke:
 
@@ -42,17 +43,17 @@ smoke env terraform probe --dir "$root" -- output
 smoke env terraform probe --dir "$root" -- destroy
 ```
 
-## Profile contract
+## Profile distinction
 
 Astrochicken is the small probe design:
 
 ```text
 IPv4          /29, 4 GCP-usable addresses
-lifecycle     transient systemd smoke-testing idiom
+lifecycle     transient systemd smoke-testing lifecycle
 frontends     Nginx execution + Squid egress
 Logma         not required
-Fatline       no full Fatline requirement
+Fatline       no full durable Fatline requirement
 serverless    optional Gen1/Gen2 shadow functions
 ```
 
-The durable Gateway profile is a separate design: `/28`/12 usable addresses, persistent FCOS/Quadlet startup, and the full Fatline/Logma runtime. Both profiles may reuse the same lower-level Agni modules without exposing that module list to the operator.
+Gateway is a separate durable Agni profile: `/28`/12 usable addresses, FCOS/Quadlet startup, Nginx/Squid, Logma, and the full Fatline runtime. They may share lower-level Agni primitives without exposing those primitives as extra Smoke steps.
