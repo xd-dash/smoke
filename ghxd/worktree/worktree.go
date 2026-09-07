@@ -1,4 +1,4 @@
-// Package worktree materializes exact GitHub repository commits as detached,
+// Package worktree seeds exact GitHub repository commits as detached,
 // clean Git worktrees backed by a shared bare object database.
 package worktree
 
@@ -41,7 +41,7 @@ type Result struct {
 	Clean          bool   `json:"clean"`
 }
 
-func Materialize(ctx context.Context, opts Options) (Result, error) {
+func Seed(ctx context.Context, opts Options) (Result, error) {
 	opts.Repository = strings.TrimSpace(opts.Repository)
 	opts.SHA = strings.ToLower(strings.TrimSpace(opts.SHA))
 	opts.RoleRef = strings.TrimSpace(opts.RoleRef)
@@ -157,17 +157,17 @@ func Materialize(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	if headSHA != actualSHA {
-		return Result{}, fmt.Errorf("materialized HEAD %s does not match exact SHA %s", headSHA, actualSHA)
+		return Result{}, fmt.Errorf("seeded HEAD %s does not match exact SHA %s", headSHA, actualSHA)
 	}
 	status, err := output(ctx, opts.Destination, git, nil, "status", "--porcelain")
 	if err != nil {
 		return Result{}, err
 	}
 	if status != "" {
-		return Result{}, fmt.Errorf("materialized worktree is not clean")
+		return Result{}, fmt.Errorf("seeded worktree is not clean")
 	}
 	if err := exec.CommandContext(ctx, git, "-C", opts.Destination, "symbolic-ref", "-q", "HEAD").Run(); err == nil {
-		return Result{}, fmt.Errorf("materialized worktree is not detached")
+		return Result{}, fmt.Errorf("seeded worktree is not detached")
 	}
 
 	worktreePath, err := filepath.EvalSymlinks(opts.Destination)
@@ -208,8 +208,8 @@ func gitAuthArgs(token string) []string {
 }
 
 // run reserves stdout for the caller's structured result. Native Git progress
-// and diagnostics go to stderr so `smoke ghxd worktree materialize` can be
-// safely consumed as JSON by actions and other programs.
+// and diagnostics go to stderr so `smoke ghxd worktree seed` can be safely
+// consumed as JSON by actions and other programs.
 func run(ctx context.Context, dir, program string, env []string, args ...string) error {
 	cmd := exec.CommandContext(ctx, program, args...)
 	if dir != "" {
