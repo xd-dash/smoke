@@ -8,11 +8,11 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: astrochicken-root <destination>")
+	if len(os.Args) != 3 || os.Args[1] != "seed" {
+		fmt.Fprintln(os.Stderr, "usage: astrochicken-root seed <destination>")
 		os.Exit(2)
 	}
-	if err := astrochicken.Materialize(os.Args[1]); err != nil {
+	if err := astrochicken.Seed(os.Args[2]); err != nil {
 		fmt.Fprintf(os.Stderr, "astrochicken-root: %v\n", err)
 		os.Exit(1)
 	}
