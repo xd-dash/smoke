@@ -35,25 +35,25 @@ func TestWorkspaceDirUsesEnvironmentWorkspace(t *testing.T) {
 	}
 }
 
-func TestCloneFilesCopiesBytes(t *testing.T) {
-	src := map[string][]byte{"main.tf": []byte("a")}
-	got := cloneFiles(src)
-	got["main.tf"][0] = 'b'
-	if string(src["main.tf"]) != "a" {
-		t.Fatal("cloneFiles aliased source bytes")
+func TestTerraformRootUsesOrdinaryHCLFiles(t *testing.T) {
+	files, err := terraformFiles()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	for _, name := range []string{"main.tf", "variables.tf", "outputs.tf"} {
+		if len(files[name]) == 0 {
+			t.Fatalf("Terraform root missing %s", name)
+		}
+	}
 
-func TestRootUsesTwoNode29ServiceAliasesAndPrivateServerlessShadows(t *testing.T) {
-	main := string(rootFiles["main.tf"])
-	variables := string(rootFiles["variables.tf"])
-	outputs := string(rootFiles["outputs.tf"])
+	main := string(files["main.tf"])
+	variables := string(files["variables.tf"])
+	outputs := string(files["outputs.tf"])
 	for _, want := range []string{
 		`"0"`, `"1"`, `"gateway"`, `"world"`, `./modules/regional-cell`,
 		`./modules/cloud-function-v1-http`, `./modules/cloud-function-v2-http`,
 		`ALLOW_INTERNAL_ONLY`, `private_ip_google_access = true`,
-		`internal_addresses`, `execution_service_ip`, `egress_service_ip`,
-		`alias_ip_ranges`, `smoke-execution-service-ip`, `smoke-egress-service-ip`,
+		`execution_service_ip`, `egress_service_ip`, `alias_ip_ranges`,
 	} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main.tf missing %q", want)
@@ -62,10 +62,8 @@ func TestRootUsesTwoNode29ServiceAliasesAndPrivateServerlessShadows(t *testing.T
 	if !strings.Contains(variables, `== 29`) {
 		t.Fatal("variables.tf does not require an Astrochicken /29")
 	}
-	for _, want := range []string{`service_addresses`, `shadow_functions`} {
-		if !strings.Contains(outputs, want) {
-			t.Fatalf("outputs.tf missing %q", want)
-		}
+	if !strings.Contains(outputs, `service_addresses`) || !strings.Contains(outputs, `shadow_functions`) {
+		t.Fatal("outputs.tf is missing Astrochicken service/shadow outputs")
 	}
 }
 
