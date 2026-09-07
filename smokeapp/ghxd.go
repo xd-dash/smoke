@@ -58,6 +58,8 @@ func runGHXD(args []string) error {
 		return runGHXDTool(ctx, name, rest...)
 	case "auth":
 		return runGHXDAuth(ctx, args[1:])
+	case "worktree":
+		return runGHXDWorktree(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown ghxd operation %q", args[0])
 	}
@@ -135,5 +137,5 @@ func ghxdAuthUsage() error {
 }
 
 func ghxdUsage() error {
-	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth> ...")
+	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth|worktree> ...")
 }
