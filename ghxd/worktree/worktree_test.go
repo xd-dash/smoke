@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestMaterializeValidation(t *testing.T) {
+func TestSeedValidation(t *testing.T) {
 	tests := []struct {
 		name string
 		opts Options
@@ -20,7 +20,7 @@ func TestMaterializeValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Materialize(context.Background(), tt.opts)
+			_, err := Seed(context.Background(), tt.opts)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
