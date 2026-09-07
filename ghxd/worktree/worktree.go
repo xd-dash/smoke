@@ -207,6 +207,9 @@ func gitAuthArgs(token string) []string {
 	return []string{"-c", "http.https://github.com/.extraheader=AUTHORIZATION: basic " + encoded}
 }
 
+// run reserves stdout for the caller's structured result. Native Git progress
+// and diagnostics go to stderr so `smoke ghxd worktree materialize` can be
+// safely consumed as JSON by actions and other programs.
 func run(ctx context.Context, dir, program string, env []string, args ...string) error {
 	cmd := exec.CommandContext(ctx, program, args...)
 	if dir != "" {
@@ -215,7 +218,7 @@ func run(ctx context.Context, dir, program string, env []string, args ...string)
 	if env != nil {
 		cmd.Env = env
 	}
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s: %w", filepath.Base(program), strings.Join(redactArgs(args), " "), err)
