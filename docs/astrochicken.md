@@ -16,6 +16,7 @@ Smoke cmd/agni
     +-- Smoke Astrochicken recipe
     |      - chooses a two-node representative topology
     |      - owns gateway/world test meaning
+    |      - owns execution/egress service-address meaning
     |      - owns outside-vs-environment lifecycle policy
     |      - writes the transient Terraform root
     |
@@ -29,6 +30,7 @@ compiled dash-xd/agni provider
     v
 Agni generic modules
     regional-network
+    regional-internal-addresses
     coreos-node
     regional-cell
     cloud-function-v1-http
@@ -39,16 +41,20 @@ Agni module names and implementations are generic. They do not contain `astrochi
 
 ## Astrochicken network
 
-The Smoke recipe requires an IPv4 `/29`. Google Cloud reserves four addresses, leaving four VM-usable slots. Astrochicken assigns only the first two:
+The Smoke recipe requires an IPv4 `/29`. Google Cloud reserves four addresses, leaving four usable addresses. Astrochicken gives all four an explicit Smoke-owned role:
 
 ```text
-slot 0  host offset 2  gateway-shaped probe node
-slot 1  host offset 3  world-shaped probe node
-slot 2  host offset 4  spare
-slot 3  host offset 5  spare
+host offset 2  gateway node primary address
+host offset 3  world node primary address
+host offset 4  execution service address -> gateway alias /32
+host offset 5  egress service address    -> gateway alias /32
 ```
 
-The regional subnet is dual-stack and enables Private Google Access. The spare addresses remain VM addresses; serverless functions do not consume them.
+The execution and egress addresses are reserved as static internal GCE addresses before the gateway VM is created. They are then attached to the gateway network interface as alias `/32`s. Smoke names the intended service roles: the execution address is available for an Nginx-facing execution frontend and the egress address is available for a Squid-facing egress frontend. Agni only knows that the addresses are reserved and attached as aliases.
+
+The guest OS/workload must still configure the alias addresses locally before binding a process to the literal IP. That workload configuration is deliberately separate from the Terraform address-allocation primitive.
+
+The regional subnet is dual-stack and enables Private Google Access. These service addresses remain Farcaster-owned regional identities; serverless functions do not consume them.
 
 ## Shadow serverless functions
 
@@ -59,18 +65,37 @@ This gives the intended request boundary:
 ```text
 public caller
     -> Cloudflare
-    -> probe VM
-       -> local gospace / pyspace / router execution
-       -> or authenticated internal invocation of GCF Gen1 / Gen2
-    <- function response
-    <- probe VM
+    -> gateway/world VM
+       -> Nginx execution frontend
+          -> local gospace / pyspace / simple-router-builder execution
+          -> or authenticated internal invocation of GCF Gen1 / Gen2
+    <- function/local response
+    <- VM
     <- Cloudflare
     <- public caller
 ```
 
+The execution service address is not the Cloud Function address. It is the stable Farcaster-side frontend that may choose local execution or invoke a serverless shadow. Likewise, the egress service address is a Farcaster-owned identity suitable for Squid policy. The Cloud Functions remain behind Google's serverless frontend and are invoked over the VPC/private Google path.
+
 The function response returning through the VM does not require the function itself to accept public ingress. For 2nd-gen functions, invocation IAM is `roles/run.invoker`; 1st-gen uses `roles/cloudfunctions.invoker`.
 
-The function maps default empty, so `smoke agni astrochicken deploy` can deploy only the `/29` and two CoreOS nodes. Supplying `gen1_functions` and/or `gen2_functions` through normal Terraform variables adds the shadow functions without changing the Smoke command or Agni module boundary.
+The function maps default empty, so `smoke agni astrochicken deploy` can deploy only the `/29`, service-address reservations, and two CoreOS nodes. Supplying `gen1_functions` and/or `gen2_functions` through normal Terraform variables adds the shadow functions without changing the Smoke command or Agni module boundary.
+
+## Runtime placement boundary
+
+Smoke owns qualification vocabulary for the logical execution provider, but the workload should preserve one HTTP-shaped contract across placements:
+
+```text
+logical handler
+    -> local Go executor
+    -> local Python executor
+    -> Gen1 executor
+    -> Gen2 executor
+```
+
+A gateway may therefore send a cold request to a serverless shadow while warming the local implementation, then serve later requests locally. It may also choose serverless because of load, policy, or a serverless-only marker. The caller remains unaware of placement.
+
+Application authentication terminates at the Farcaster layer. Farcaster uses its VM service account and Google IAM authentication for the internal function hop; public clients do not need Google credentials.
 
 ## Scope
 

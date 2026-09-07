@@ -15,6 +15,7 @@ import (
 
 var modules = []string{
 	"regional-network",
+	"regional-internal-addresses",
 	"coreos-node",
 	"regional-cell",
 	"cloud-function-v1-http",
@@ -39,6 +40,8 @@ provider "google" {
 }
 
 locals {
+  execution_service_ip = cidrhost(var.ipv4_cidr, 4)
+  egress_service_ip    = cidrhost(var.ipv4_cidr, 5)
   function_invoker_members = distinct(concat(
     var.function_invoker_members,
     var.service_account_email == "" ? [] : ["serviceAccount:${var.service_account_email}"]
@@ -58,9 +61,30 @@ module "region" {
   enable_ipv6              = true
   private_ip_google_access = true
 
+  internal_addresses = {
+    execution = {
+      name        = "${var.subnetwork_name}-execution"
+      address     = local.execution_service_ip
+      description = "Astrochicken Nginx execution service address"
+    }
+    egress = {
+      name        = "${var.subnetwork_name}-egress"
+      address     = local.egress_service_ip
+      description = "Astrochicken Squid egress service address"
+    }
+  }
+
   nodes = {
     "0" = {
-      metadata = { "smoke-role" = "gateway" }
+      metadata = {
+        "smoke-role"                 = "gateway"
+        "smoke-execution-service-ip" = local.execution_service_ip
+        "smoke-egress-service-ip"    = local.egress_service_ip
+      }
+      alias_ip_ranges = [
+        { ip_cidr_range = "${local.execution_service_ip}/32" },
+        { ip_cidr_range = "${local.egress_service_ip}/32" },
+      ]
       service_account_email = var.service_account_email
     }
     "1" = {
@@ -164,12 +188,7 @@ variable "gen2_functions" {
 `),
 	"outputs.tf": []byte(`output "subnetwork" { value = module.region.subnetwork }
 output "nodes" { value = module.region.nodes }
-output "spare_ipv4_by_slot" {
-  value = {
-    "2" = cidrhost(var.ipv4_cidr, 4)
-    "3" = cidrhost(var.ipv4_cidr, 5)
-  }
-}
+output "service_addresses" { value = module.region.internal_addresses }
 output "shadow_functions" {
   value = {
     gen1 = { for name, fn in module.gen1_functions : name => fn.uri }
