@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-func TestMaterializeWritesTerraformSource(t *testing.T) {
+func TestSeedWritesTerraformSource(t *testing.T) {
 	dir := t.TempDir()
-	if err := Materialize(dir); err != nil {
+	if err := Seed(dir); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"main.tf", "variables.tf", "outputs.tf"} {
