@@ -2,7 +2,7 @@
 
 `ghxd` is Smoke's optional, Go-native GitHub tool environment. It is the stable composition surface for GitHub utilities used by Smoke providers and operator workflows.
 
-It intentionally lives inside the `xd-dash/smoke` Go module. There is no `dash-xd/github-tools` repository and no `gxd` compatibility name.
+It intentionally lives inside the `xd-dash/smoke` Go module.
 
 ## Bootstrap
 
