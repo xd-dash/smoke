@@ -67,28 +67,30 @@ Rules:
 
 External source roots such as Terraform roots are caller-owned until a future explicit resource-root primitive includes them in the environment digest. Qualification therefore records their exact source/seed identities separately.
 
-## Seed is the preparation idiom
+## Seed is a shared operation name, not a shared provider
 
-Use **seed** for preparing a destination from an exact source/tool. This is already the established ghxd/worktree idiom:
-
-```bash
-smoke ghxd worktree ... seed ...
-github-worktree seed ...
-```
-
-The semantic contract is:
+Use **seed** for exact-source destination preparation, but do not centralize seed implementations merely because they share the verb.
 
 ```text
-exact source/tool
-      |
-      v
-seed destination/root
-      |
-      v
-consumer operates on seeded root
+ghxd/worktree seed
+    GitHub/Git-specific implementation
+    repository + exact SHA
+    -> detached worktree
+
+Agni tf seed
+    Agni-specific Terraform source implementation
+    selected embedded modules
+    -> Terraform modules/
+
+Astrochicken seed
+    recipe-specific source implementation
+    embedded recipe .tf files
+    -> Terraform composition root
 ```
 
-Use `seed` consistently for Terraform recipe roots and reusable Terraform modules as well. Do not introduce `materialize` as a competing public command, package API, or architectural term for the same operation.
+`github-worktree seed` remains owned by the ghxd/GitHub tooling path. Agni MUST NOT import or reuse ghxd/worktree seeding; its `tf seed` path has different inputs, lifecycle, and filesystem semantics. Shared vocabulary does not imply a shared provider interface or implementation.
+
+Do not introduce `materialize` as a competing public command, package API, or architectural term for these exact-source preparation operations.
 
 ## Generic tool execution
 
@@ -99,6 +101,8 @@ smoke env tool run <env> <tool> [args ...]
 ```
 
 This is a thin `go tool <tool> ...` boundary. Smoke does not reinterpret the tool's domain language.
+
+Prefer short tool names when the module path already supplies ownership/context. Avoid duplicative names such as `agni-terraform` when `github.com/dash-xd/agni/cmd/tf` plus the environment context already identifies the implementation.
 
 ## Generic Terraform execution
 
@@ -121,20 +125,22 @@ A deployment/probe such as Astrochicken is a recipe above Smoke core:
 ```text
 Astrochicken environment
     +-- selected exact Go tools
-    |     +-- astrochicken-root
-    |     `-- agni-terraform
+    |     +-- astrochicken
+    |     `-- tf
     +-- seeded ordinary Terraform root
     `-- native terraform
 ```
 
 The recipe name and deployment policy do not belong in Smoke's generic environment implementation. The current recipe tool may live in Smoke temporarily, but it is not linked into stock Smoke.
 
-The intended seed path is:
+The intended seed path is concise and explicit:
 
 ```bash
-smoke env tool run astrochicken astrochicken-root seed <root>
-smoke env tool run astrochicken agni-terraform seed --module ... <root>
+smoke env tool run astrochicken astrochicken seed <root>
+smoke env tool run astrochicken tf seed --module ... <root>
 ```
+
+The first `astrochicken` identifies the environment; the second is the exact recipe tool selected into that environment. Do not append implementation-detail suffixes such as `-root` to the tool name.
 
 ## Composition versus environment
 
@@ -159,7 +165,7 @@ The experimental Smoke↔Agni Terraform provider bridge is retired.
 
 ## ghxd / worktree idiom
 
-`ghxd` remains GitHub-specific. Worktree preparation uses `seed` and exact SHA inputs. `github-worktree seed` is the reference idiom for source-root preparation: exact source identity, caller-selected destination, no hidden dependency graph.
+`ghxd` remains GitHub-specific. Worktree preparation uses `seed` and exact SHA inputs. Its implementation remains in the GitHub/Git tooling path and is not a generic seeding library for unrelated domains.
 
 ## Logmash runtime invariants
 
@@ -181,7 +187,7 @@ Smoke
        |
        v
 Agni
-  generic infrastructure modules/seed tools
+  generic infrastructure modules + independent `tf seed`
        |
        v
 native Terraform/gcloud/Butane/QEMU
@@ -195,14 +201,15 @@ When modifying Smoke:
 
 1. Preserve the smallest native composition primitive that satisfies the requirement.
 2. Keep Go authoritative for Go modules/tools and Terraform authoritative for Terraform.
-3. Use `seed` for exact-source destination preparation; do not add parallel `materialize` vocabulary.
+3. Use `seed` for exact-source destination preparation, but keep domain-specific seed implementations independent.
 4. Prefer environment tools over new compiled providers when the capability is naturally a CLI/seed operation.
-5. Keep deployment recipes outside generic Smoke core.
-6. Preserve immutable snapshots and short canonical locks.
-7. Keep process-global cwd/environment mutation out of reusable execution paths.
-8. Preserve exact-source qualification outside Smoke runtime identity.
-9. Add focused tests for parser/environment/tool/provider/lifecycle invariants touched.
-10. Run `go vet ./...` and `go test -race ./...` on the exact final candidate.
-11. Update this maintenance contract when a responsibility boundary changes.
+5. Prefer short, non-redundant tool names whose repository/module path already establishes ownership.
+6. Keep deployment recipes outside generic Smoke core.
+7. Preserve immutable snapshots and short canonical locks.
+8. Keep process-global cwd/environment mutation out of reusable execution paths.
+9. Preserve exact-source qualification outside Smoke runtime identity.
+10. Add focused tests for parser/environment/tool/provider/lifecycle invariants touched.
+11. Run `go vet ./...` and `go test -race ./...` on the exact final candidate.
+12. Update this maintenance contract when a responsibility boundary changes.
 
-Before adding a daemon, custom dependency graph, runtime plugin mechanism, asset package manager, or provider abstraction, first verify the requirement cannot be expressed through Go composition, named environments, `go.work`/`go.mod`, environment tools, immutable snapshots, `env exec`, `seed`, or the authoritative native tool itself.
+Before adding a daemon, custom dependency graph, runtime plugin mechanism, asset package manager, or provider abstraction, first verify the requirement cannot be expressed through Go composition, named environments, `go.work`/`go.mod`, environment tools, immutable snapshots, `env exec`, domain-specific `seed`, or the authoritative native tool itself.
