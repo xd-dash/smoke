@@ -44,11 +44,34 @@ func TestCloneFilesCopiesBytes(t *testing.T) {
 	}
 }
 
-func TestRootUsesTwoRepresentativeSlots(t *testing.T) {
+func TestRootUsesTwoNode29AndPrivateServerlessShadows(t *testing.T) {
 	main := string(rootFiles["main.tf"])
-	for _, want := range []string{`"0"`, `"1"`, `"gateway"`, `"world"`, `./modules/regional-cell`} {
+	variables := string(rootFiles["variables.tf"])
+	outputs := string(rootFiles["outputs.tf"])
+	for _, want := range []string{
+		`"0"`, `"1"`, `"gateway"`, `"world"`, `./modules/regional-cell`,
+		`./modules/cloud-function-v1-http`, `./modules/cloud-function-v2-http`,
+		`ALLOW_INTERNAL_ONLY`, `private_ip_google_access = true`,
+	} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main.tf missing %q", want)
+		}
+	}
+	if !strings.Contains(variables, `== 29`) {
+		t.Fatal("variables.tf does not require an Astrochicken /29")
+	}
+	for _, want := range []string{`spare_ipv4_by_slot`, `cidrhost(var.ipv4_cidr, 4)`, `cidrhost(var.ipv4_cidr, 5)`, `shadow_functions`} {
+		if !strings.Contains(outputs, want) {
+			t.Fatalf("outputs.tf missing %q", want)
+		}
+	}
+}
+
+func TestAstrochickenSelectsRequiredAgniModules(t *testing.T) {
+	joined := strings.Join(modules, " ")
+	for _, want := range []string{"regional-cell", "cloud-function-v1-http", "cloud-function-v2-http"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("module selection missing %q", want)
 		}
 	}
 }

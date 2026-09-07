@@ -31,9 +31,46 @@ Agni generic modules
     regional-network
     coreos-node
     regional-cell
+    cloud-function-v1-http
+    cloud-function-v2-http
 ```
 
-Agni module names and implementations are generic. They do not contain `astrochicken`, `farcaster`, `world`, `fatline`, or Logma topology policy. The same `regional-cell` module is intended to scale from the two nodes selected by Smoke to the full regional /28 composition.
+Agni module names and implementations are generic. They do not contain `astrochicken`, `farcaster`, `world`, `fatline`, or Logma topology policy. A full regional deployment can use a `/28` and twelve node slots, while Astrochicken deliberately chooses the same generic modules with a `/29` and only two nodes.
+
+## Astrochicken network
+
+The Smoke recipe requires an IPv4 `/29`. Google Cloud reserves four addresses, leaving four VM-usable slots. Astrochicken assigns only the first two:
+
+```text
+slot 0  host offset 2  gateway-shaped probe node
+slot 1  host offset 3  world-shaped probe node
+slot 2  host offset 4  spare
+slot 3  host offset 5  spare
+```
+
+The regional subnet is dual-stack and enables Private Google Access. The spare addresses remain VM addresses; serverless functions do not consume them.
+
+## Shadow serverless functions
+
+The Astrochicken root can optionally deploy maps of 1st-gen and 2nd-gen HTTP functions from caller-supplied Cloud Storage source objects. Both use `ALLOW_INTERNAL_ONLY` ingress. The probe VM service account is automatically included as an invoker when `service_account_email` is set; additional IAM principals can be supplied through `function_invoker_members`.
+
+This gives the intended request boundary:
+
+```text
+public caller
+    -> Cloudflare
+    -> probe VM
+       -> local gospace / pyspace / router execution
+       -> or authenticated internal invocation of GCF Gen1 / Gen2
+    <- function response
+    <- probe VM
+    <- Cloudflare
+    <- public caller
+```
+
+The function response returning through the VM does not require the function itself to accept public ingress. For 2nd-gen functions, invocation IAM is `roles/run.invoker`; 1st-gen uses `roles/cloudfunctions.invoker`.
+
+The function maps default empty, so `smoke agni astrochicken deploy` can deploy only the `/29` and two CoreOS nodes. Supplying `gen1_functions` and/or `gen2_functions` through normal Terraform variables adds the shadow functions without changing the Smoke command or Agni module boundary.
 
 ## Scope
 

@@ -13,7 +13,13 @@ import (
 	smokeagni "github.com/xd-dash/smoke/agni"
 )
 
-var modules = []string{"regional-network", "coreos-node", "regional-cell"}
+var modules = []string{
+	"regional-network",
+	"coreos-node",
+	"regional-cell",
+	"cloud-function-v1-http",
+	"cloud-function-v2-http",
+}
 
 var rootFiles = map[string][]byte{
 	"main.tf": []byte(`terraform {
@@ -32,6 +38,13 @@ provider "google" {
   zone    = var.zone
 }
 
+locals {
+  function_invoker_members = distinct(concat(
+    var.function_invoker_members,
+    var.service_account_email == "" ? [] : ["serviceAccount:${var.service_account_email}"]
+  ))
+}
+
 module "region" {
   source = "./modules/regional-cell"
 
@@ -43,6 +56,7 @@ module "region" {
   ipv4_cidr                = var.ipv4_cidr
   source_instance_template = var.source_instance_template
   enable_ipv6              = true
+  private_ip_google_access = true
 
   nodes = {
     "0" = {
@@ -55,6 +69,47 @@ module "region" {
     }
   }
 }
+
+module "gen1_functions" {
+  for_each = var.gen1_functions
+  source   = "./modules/cloud-function-v1-http"
+
+  project               = var.project
+  region                = var.region
+  name                  = each.key
+  runtime               = each.value.runtime
+  entry_point           = each.value.entry_point
+  source_archive_bucket = each.value.source_archive_bucket
+  source_archive_object = each.value.source_archive_object
+  ingress_settings      = "ALLOW_INTERNAL_ONLY"
+  invoker_members       = local.function_invoker_members
+  service_account_email = each.value.service_account_email
+  available_memory_mb   = each.value.available_memory_mb
+  timeout_seconds       = each.value.timeout_seconds
+  environment_variables = each.value.environment_variables
+  labels                = merge({ "smoke-role" = "shadow" }, each.value.labels)
+}
+
+module "gen2_functions" {
+  for_each = var.gen2_functions
+  source   = "./modules/cloud-function-v2-http"
+
+  project               = var.project
+  region                = var.region
+  name                  = each.key
+  runtime               = each.value.runtime
+  entry_point           = each.value.entry_point
+  source_archive_bucket = each.value.source_archive_bucket
+  source_archive_object = each.value.source_archive_object
+  ingress_settings      = "ALLOW_INTERNAL_ONLY"
+  invoker_members       = local.function_invoker_members
+  service_account_email = each.value.service_account_email
+  available_memory      = each.value.available_memory
+  timeout_seconds       = each.value.timeout_seconds
+  min_instance_count    = each.value.min_instance_count
+  max_instance_count    = each.value.max_instance_count
+  environment_variables = each.value.environment_variables
+}
 `),
 	"variables.tf": []byte(`variable "project" { type = string }
 variable "region" { type = string }
@@ -64,8 +119,8 @@ variable "subnetwork_name" { type = string }
 variable "ipv4_cidr" {
   type = string
   validation {
-    condition     = can(cidrhost(var.ipv4_cidr, 0)) && tonumber(split("/", var.ipv4_cidr)[1]) == 28
-    error_message = "ipv4_cidr must be a valid IPv4 /28 CIDR."
+    condition     = can(cidrhost(var.ipv4_cidr, 0)) && tonumber(split("/", var.ipv4_cidr)[1]) == 29
+    error_message = "Astrochicken ipv4_cidr must be a valid IPv4 /29 CIDR."
   }
 }
 variable "source_instance_template" { type = string }
@@ -73,9 +128,54 @@ variable "service_account_email" {
   type    = string
   default = ""
 }
+variable "function_invoker_members" {
+  type    = list(string)
+  default = []
+}
+variable "gen1_functions" {
+  type = map(object({
+    runtime               = string
+    entry_point           = string
+    source_archive_bucket = string
+    source_archive_object = string
+    service_account_email = optional(string, "")
+    available_memory_mb   = optional(number, 256)
+    timeout_seconds       = optional(number, 60)
+    environment_variables = optional(map(string), {})
+    labels                = optional(map(string), {})
+  }))
+  default = {}
+}
+variable "gen2_functions" {
+  type = map(object({
+    runtime               = string
+    entry_point           = string
+    source_archive_bucket = string
+    source_archive_object = string
+    service_account_email = optional(string, "")
+    available_memory      = optional(string, "256M")
+    timeout_seconds       = optional(number, 60)
+    min_instance_count    = optional(number, 0)
+    max_instance_count    = optional(number, 1)
+    environment_variables = optional(map(string), {})
+  }))
+  default = {}
+}
 `),
 	"outputs.tf": []byte(`output "subnetwork" { value = module.region.subnetwork }
 output "nodes" { value = module.region.nodes }
+output "spare_ipv4_by_slot" {
+  value = {
+    "2" = cidrhost(var.ipv4_cidr, 4)
+    "3" = cidrhost(var.ipv4_cidr, 5)
+  }
+}
+output "shadow_functions" {
+  value = {
+    gen1 = { for name, fn in module.gen1_functions : name => fn.uri }
+    gen2 = { for name, fn in module.gen2_functions : name => fn.uri }
+  }
+}
 `),
 }
 
