@@ -80,7 +80,7 @@ jobs:
           "$ghxd" show | grep -Fx $'environment\tghxd'
 
           destination="$RUNNER_TEMP/ghxd-worktree"
-          result="$($smoke ghxd worktree materialize \
+          result="$($smoke ghxd worktree seed \
             --repository xd-dash/smoke \
             --sha "$GITHUB_SHA" \
             --destination "$destination" \
