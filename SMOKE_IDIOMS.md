@@ -1,10 +1,10 @@
 # Smoke / Logmash idioms
 
-This file is the maintenance contract for `xd-dash/smoke`. Smoke is a self-composed Go executable plus named execution environments. It is not an installation-profile repository, runtime plugin host, or replacement package manager.
+Smoke is a self-composed Go executable plus named execution environments. It is not an installation-profile repository, runtime plugin host, infrastructure package manager, or replacement dependency language.
 
 ## Core identity
 
-- Compiled-in commands/providers are ordinary Go packages selected by imports.
+- Compiled commands/providers are ordinary Go packages selected by imports.
 - Environment tools are Go `tool` dependencies executed with `go tool` inside immutable environment snapshots.
 - `commands`, `compose`, `env`, and `inspect` are core names.
 - Do not reintroduce PATH-based compiled-command discovery, `.so` plugins, or a resident plugin daemon.
@@ -21,7 +21,7 @@ A Smoke environment is a local execution composition whose dependency authority 
     └── go.sum
 ```
 
-The environment name is an operator-local role/lifecycle label. It does not imply a recipe or profile.
+The environment name is an operator-local role/lifecycle label. It does not imply a profile.
 
 ```text
 probe
@@ -30,7 +30,7 @@ experiment-7
 gateway-test
 ```
 
-are all ordinary names. Smoke MUST NOT infer installation policy from them.
+are ordinary names. Smoke MUST NOT infer installation policy from them.
 
 ## Immutable workspace invariants
 
@@ -42,7 +42,7 @@ are all ordinary names. Smoke MUST NOT infer installation policy from them.
 - Equal Go workspace/tool state reuses the same snapshot.
 - Child activation uses `GOWORK`, `SMOKE_ENV`, and workspace identity rather than process-global cwd/environment mutation.
 
-External roots such as Terraform installations remain caller/profile-owned until an explicit future root primitive includes them in the Smoke digest.
+External roots such as Terraform installations remain profile/caller-owned until an explicit future root primitive includes them in the Smoke digest.
 
 ## Generic tool execution
 
@@ -62,13 +62,11 @@ smoke env terraform <env> --dir <root> -- output
 smoke env terraform <env> --dir <root> -- destroy
 ```
 
-Terraform remains the authoritative native contract for HCL, providers, variables, backends, state, plans, and lifecycle.
+Terraform remains authoritative for HCL, module imports, providers, variables, backends, state, plans, and lifecycle.
 
 ## Installation profiles live above Smoke
 
-Smoke does not own Astrochicken, Gateway, or other installation recipes. Those profiles may be installed as exact environment tools from their owning module.
-
-Example:
+Smoke does not own Astrochicken, Gateway, or other installation recipes. Profiles are exact environment tools from their owning module.
 
 ```bash
 smoke env create probe
@@ -77,17 +75,18 @@ smoke env tool run probe astrochicken seed <root>
 smoke env terraform probe --dir <root> -- plan
 ```
 
-The profile tool owns its own configuration and internal shared-module dependency graph. Smoke MUST NOT require the operator to enumerate those dependencies separately.
+From Smoke's perspective a complete profile seed is one tool operation. Smoke MUST NOT require or encourage a second module-enumeration step.
 
-This means the old two-tool path is retired:
+The profile's own HCL/configuration declares its composition. If the profile internally ships a shared Terraform library, that is profile implementation detail; Smoke neither selects nor inventories those Terraform modules.
+
+## Environment role and profile identity are orthogonal
 
 ```text
-Astrochicken tool
-+
-tf seed --module ...
+environment role    probe / gateway-test / us-west1 / arbitrary
+profile identity    astrochicken / gateway / future design
 ```
 
-A complete profile seed is one operation from Smoke's perspective.
+A profile may run in many environments. An environment may gain additional tools while a design evolves. Environment names must never become hidden dependency selectors.
 
 ## Seed vocabulary
 
@@ -98,10 +97,10 @@ ghxd worktree seed
     Git/worktree implementation
 
 Agni profile seed
-    installation-root/filesystem implementation
+    installation-root/config/filesystem implementation
 ```
 
-Smoke MUST NOT unify unrelated seed implementations merely because they share a verb.
+Do not create a generic `SeedProvider` merely because both domains use the same verb.
 
 ## Composition versus environment
 
@@ -119,15 +118,17 @@ Provider registries are for typed runtime dispatch capabilities, not build/root 
 - providers are supplied by Go composition/callers;
 - schemes are normalized and duplicates invalid;
 - contracts remain narrow and capability-specific;
-- do not introduce providers merely to seed Terraform files or forward Terraform arguments.
+- do not introduce providers merely to seed installation files or forward Terraform arguments.
 
 ## ghxd boundary
 
-`ghxd` remains GitHub-specific. `github-worktree seed` owns Git repository/SHA/auth/object/worktree semantics. Installation-profile seeding is unrelated implementation owned by the profile repository.
+`ghxd` remains GitHub-specific. `github-worktree seed` owns repository/SHA/auth/object/ref/worktree semantics. Installation-profile seeding is unrelated implementation owned by the profile repository.
 
 ## Logmash / durable Logma boundary
 
 Logmash remains ephemeral receive/route/callback runtime. `xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
+
+This distinction also matters to installation profiles: a transient probe may use Smoke/Logmash-style lifecycle without requiring durable Logma, while a durable Gateway profile may include Logma/Fatline as its own installation policy. Smoke core still remains agnostic.
 
 ## Cross-repository authority
 
@@ -141,7 +142,7 @@ Smoke
        |
        v
 Agni installation profile
-  profile config + lifecycle + shared infrastructure primitives
+  profile HCL/config + lifecycle + shared primitives
        |
        v
 native Terraform/gcloud/Butane/QEMU
@@ -150,11 +151,12 @@ native Terraform/gcloud/Butane/QEMU
 ## Change protocol
 
 1. Keep Smoke generic; profile names do not enter Smoke core.
-2. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform.
+2. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
 3. Let installation profiles own their internal dependency graph.
 4. Never make operators restate profile dependencies through Smoke.
-5. Preserve immutable snapshots and short canonical locks.
-6. Keep process-global cwd/environment mutation out of reusable execution paths.
-7. Preserve exact-source qualification outside Smoke runtime identity.
-8. Use provider registries only for genuine runtime dispatch.
-9. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
+5. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
+6. Preserve immutable snapshots and short canonical locks.
+7. Keep process-global cwd/environment mutation out of reusable execution paths.
+8. Preserve exact-source qualification outside Smoke runtime identity.
+9. Use provider registries only for genuine runtime dispatch.
+10. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
