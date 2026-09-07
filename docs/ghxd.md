@@ -100,6 +100,24 @@ smoke ghxd auth refresh <client-id> <refresh-token> [client-secret]
 
 These commands forward to the installed `github-device-auth` Go tool inside the immutable `ghxd` workspace. Smoke does not reimplement GitHub's OAuth/device protocol.
 
+## Exact worktree materialization
+
+Reusable GitHub worktree mechanics live in the ordinary Go package `github.com/xd-dash/smoke/ghxd/worktree`. The operator surface is:
+
+```bash
+smoke ghxd worktree materialize \
+  --repository xd-dash/example \
+  --sha <40-char-sha> \
+  --role-ref <optional-branch> \
+  --destination /tmp/example
+```
+
+The exact SHA is execution authority. `--role-ref` is fetched independently and, when present, only verifies that the requested SHA is equal to or an ancestor of the current role-ref head. It can never replace the requested SHA.
+
+The primitive maintains one shared bare object database per GitHub repository, fetches the exact commit, optionally verifies role-ref ancestry, materializes a detached worktree, then verifies exact HEAD identity and cleanliness before returning JSON. `GH_TOKEN` is read at runtime by default and is never persisted into Smoke state or included as a command argument.
+
+The returned JSON is transport-neutral execution evidence from the primitive. Organization-specific evidence schemas remain with the caller. Huram, for example, wraps the result in its `huram.git_component_materialization` evidence instead of making that schema part of Smoke.
+
 The intended growth shape is:
 
 ```text
@@ -110,7 +128,7 @@ ghxd/
 │   ├── wif/        # when reusable behavior exists
 │   └── ...
 ├── cdn/
-├── worktree/
+├── worktree/       # reusable exact-Git materialization
 ├── webhook/
 └── workflow/
 ```
@@ -130,10 +148,8 @@ Smoke
         |
         v
       ghxd
-     /    \
- auth     cdn
-  |        |
-device   repository operations
+     /    |     \
+ auth    cdn   worktree
 ```
 
 No token, organization name, tenant value, repository target, project ID, or other business-specific value belongs in `ghxd`.
@@ -151,23 +167,8 @@ No forge-neutral provider framework is required in advance.
 
 ## Go owns the composition
 
-Every current `ghxd` component is a Go module/tool, so Go remains authoritative for module queries, pseudo-versions, downloads, checksums, `go.mod`, and tool directives.
+Every current `ghxd` component is ordinary Go package/tool behavior, so Go remains authoritative for module queries, pseudo-versions, downloads, checksums, `go.mod`, tool directives, and reusable worktree implementation.
 
-Smoke owns only environment, snapshot, and execution lifecycle.
-
-```text
-GitHub Go utilities
-        |
-        v
-      ghxd
-        |
-        v
-Go tool directives
-        |
-        v
-Smoke environment/snapshot
-```
+Smoke owns only environment, snapshot, execution, and GitHub operator orchestration lifecycle.
 
 Do not introduce Android Repo merely because GitHub capabilities originate in multiple Go repositories. Repo is only relevant if a final composition genuinely spans independently versioned non-Go ecosystems that cannot naturally remain one Go dependency/tool graph.
-
-For worktree automation specifically, reusable Git mechanics should migrate into ordinary Go behavior first; Huram Actions and `ghxd` can then consume the same implementation rather than making GitHub Actions YAML the reusable primitive.
