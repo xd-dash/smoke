@@ -11,10 +11,10 @@ import (
 )
 
 func runGHXDWorktree(ctx context.Context, args []string) error {
-	if len(args) == 0 || args[0] != "materialize" {
+	if len(args) == 0 || args[0] != "seed" {
 		return ghxdWorktreeUsage()
 	}
-	fs := flag.NewFlagSet("ghxd worktree materialize", flag.ContinueOnError)
+	fs := flag.NewFlagSet("ghxd worktree seed", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	repository := fs.String("repository", "", "GitHub repository in owner/name form")
 	sha := fs.String("sha", "", "exact 40-character commit SHA")
@@ -32,7 +32,7 @@ func runGHXDWorktree(ctx context.Context, args []string) error {
 	if *tokenEnv != "" {
 		token = os.Getenv(*tokenEnv)
 	}
-	result, err := ghxdworktree.Materialize(ctx, ghxdworktree.Options{
+	result, err := ghxdworktree.Seed(ctx, ghxdworktree.Options{
 		Repository:         *repository,
 		SHA:                *sha,
 		RoleRef:            *roleRef,
@@ -44,11 +44,11 @@ func runGHXDWorktree(ctx context.Context, args []string) error {
 		return err
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-		return fmt.Errorf("encode worktree result: %w", err)
+		return fmt.Errorf("encode worktree seed result: %w", err)
 	}
 	return nil
 }
 
 func ghxdWorktreeUsage() error {
-	return fmt.Errorf("usage: smoke ghxd worktree materialize --repository <owner/name> --sha <40-char-sha> --destination <path> [--role-ref <branch>] [--object-root <path>] [--token-env <name>]")
+	return fmt.Errorf("usage: smoke ghxd worktree seed --repository <owner/name> --sha <40-char-sha> --destination <path> [--role-ref <branch>] [--object-root <path>] [--token-env <name>]")
 }

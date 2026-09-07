@@ -100,12 +100,12 @@ smoke ghxd auth refresh <client-id> <refresh-token> [client-secret]
 
 These commands forward to the installed `github-device-auth` Go tool inside the immutable `ghxd` workspace. Smoke does not reimplement GitHub's OAuth/device protocol.
 
-## Exact worktree materialization
+## Exact worktree seeding
 
 Reusable GitHub worktree mechanics live in the ordinary Go package `github.com/xd-dash/smoke/ghxd/worktree`. The operator surface is:
 
 ```bash
-smoke ghxd worktree materialize \
+smoke ghxd worktree seed \
   --repository xd-dash/example \
   --sha <40-char-sha> \
   --role-ref <optional-branch> \
@@ -114,9 +114,9 @@ smoke ghxd worktree materialize \
 
 The exact SHA is execution authority. `--role-ref` is fetched independently and, when present, only verifies that the requested SHA is equal to or an ancestor of the current role-ref head. It can never replace the requested SHA.
 
-The primitive maintains one shared bare object database per GitHub repository, fetches the exact commit, optionally verifies role-ref ancestry, materializes a detached worktree, then verifies exact HEAD identity and cleanliness before returning JSON. `GH_TOKEN` is read at runtime by default and is never persisted into Smoke state or included as a command argument.
+The primitive maintains one shared bare object database per GitHub repository, fetches the exact commit, optionally verifies role-ref ancestry, seeds a detached worktree, then verifies exact HEAD identity and cleanliness before returning JSON. `GH_TOKEN` is read at runtime by default and is never persisted into Smoke state or included as a command argument.
 
-The returned JSON is transport-neutral execution evidence from the primitive. Organization-specific evidence schemas remain with the caller. Huram, for example, wraps the result in its `huram.git_component_materialization` evidence instead of making that schema part of Smoke.
+The returned JSON is transport-neutral execution evidence from the primitive. Organization-specific evidence schemas remain with the caller. Huram, for example, wraps the result in its `huram.git_component_seed` evidence instead of making that schema part of Smoke.
 
 The intended growth shape is:
 
@@ -128,7 +128,7 @@ ghxd/
 │   ├── wif/        # when reusable behavior exists
 │   └── ...
 ├── cdn/
-├── worktree/       # reusable exact-Git materialization
+├── worktree/       # reusable exact-Git seeding
 ├── webhook/
 └── workflow/
 ```
