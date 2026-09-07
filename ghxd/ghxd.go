@@ -4,9 +4,9 @@
 // beside ghxd as their own Smoke provider/tool environments rather than behind
 // a forge-neutral abstraction inside this package.
 //
-// Each capability remains an ordinary Go tool. Smoke owns only the named
-// environment, immutable snapshot, and execution lifecycle. Credentials and
-// organization-specific values are never persisted here.
+// Each external capability remains an ordinary Go tool. Smoke owns only the
+// named environment, immutable snapshot, and execution lifecycle. Credentials
+// and organization-specific values are never persisted here.
 package ghxd
 
 import (
@@ -19,12 +19,13 @@ import (
 
 const DefaultEnvironment = "ghxd"
 
-// ToolSpecs is the default GitHub capability set. GitHub-specific capability
-// families may grow beneath ghxd (for example auth/device, auth/oauth,
-// auth/wif, worktree, webhook, and workflow) when reusable Go behavior exists.
+// ToolSpecs is the default GitHub capability set installed into the ghxd
+// workspace. GitHub-specific capability families may grow beneath ghxd when
+// reusable Go behavior exists.
 var ToolSpecs = []string{
 	"github.com/dash-xd/github-cdn@go",
 	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
+	"github.com/xd-dash/smoke/cmd/github-worktree@main",
 }
 
 // Apply composes ghxd into an existing Smoke environment using Go's native
