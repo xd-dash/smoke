@@ -119,98 +119,44 @@ func Create(ctx context.Context, name string) (Environment, error) {
 		return Environment{}, err
 	}
 	defer lock.Close()
-
-	if _, err := os.Stat(env.WorkFile); err == nil {
-		return Environment{}, fmt.Errorf("environment %q already exists", name)
-	} else if !os.IsNotExist(err) {
-		return Environment{}, err
-	}
 	if err := os.MkdirAll(env.ToolsDir, 0o700); err != nil {
 		return Environment{}, err
 	}
-	mod := fmt.Sprintf("module %s\n\ngo %s\n", env.ToolsMod, goVersion)
-	if err := os.WriteFile(filepath.Join(env.ToolsDir, "go.mod"), []byte(mod), 0o600); err != nil {
+	if _, err := os.Stat(env.WorkFile); os.IsNotExist(err) {
+		if err := runGo(ctx, env.Dir, "off", "work", "init", env.ToolsDir); err != nil {
+			return Environment{}, err
+		}
+	} else if err != nil {
 		return Environment{}, err
 	}
-	work := fmt.Sprintf("go %s\n\nuse ./tools\n", goVersion)
-	if err := os.WriteFile(env.WorkFile, []byte(work), 0o600); err != nil {
+	if _, err := os.Stat(filepath.Join(env.ToolsDir, "go.mod")); os.IsNotExist(err) {
+		if err := runGo(ctx, env.ToolsDir, "off", "mod", "init", env.ToolsMod); err != nil {
+			return Environment{}, err
+		}
+	} else if err != nil {
 		return Environment{}, err
-	}
-	return env, nil
-}
-
-func List() ([]Environment, error) {
-	root, err := Root()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var out []Environment
-	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == ".locks" {
-			continue
-		}
-		env, err := Resolve(entry.Name())
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(env.WorkFile); err == nil {
-			out = append(out, env)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
-}
-
-func Require(name string) (Environment, error) {
-	env, err := Resolve(name)
-	if err != nil {
-		return Environment{}, err
-	}
-	if _, err := os.Stat(env.WorkFile); err != nil {
-		if os.IsNotExist(err) {
-			return Environment{}, fmt.Errorf("environment %q does not exist", name)
-		}
-		return Environment{}, err
-	}
-	if _, err := os.Stat(filepath.Join(env.ToolsDir, "go.mod")); err != nil {
-		return Environment{}, fmt.Errorf("environment %q tools module: %w", name, err)
 	}
 	return env, nil
 }
 
 func Use(ctx context.Context, name, moduleDir string) error {
-	env, err := Require(name)
+	env, err := Resolve(name)
 	if err != nil {
 		return err
-	}
-	moduleDir, err = filepath.Abs(moduleDir)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(moduleDir, "go.mod")); err != nil {
-		return fmt.Errorf("workspace module %s: %w", moduleDir, err)
 	}
 	lock, err := acquireExclusive(ctx, env)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+	if err := os.MkdirAll(env.Dir, 0o700); err != nil {
+		return err
+	}
 	return runGo(ctx, env.Dir, env.WorkFile, "work", "use", moduleDir)
 }
 
 func DropUse(ctx context.Context, name, moduleDir string) error {
-	env, err := Require(name)
-	if err != nil {
-		return err
-	}
-	moduleDir, err = filepath.Abs(moduleDir)
+	env, err := Resolve(name)
 	if err != nil {
 		return err
 	}
@@ -219,34 +165,64 @@ func DropUse(ctx context.Context, name, moduleDir string) error {
 		return err
 	}
 	defer lock.Close()
-	return runGo(ctx, env.Dir, env.WorkFile, "work", "edit", "-dropuse="+moduleDir)
+	return runGo(ctx, env.Dir, env.WorkFile, "work", "edit", "-dropuse", moduleDir)
 }
 
-func AddTool(ctx context.Context, name, packageSpec string) error {
-	env, err := Require(name)
+func AddModule(ctx context.Context, name, module string) error {
+	env, err := Resolve(name)
 	if err != nil {
 		return err
-	}
-	packageSpec = strings.TrimSpace(packageSpec)
-	if packageSpec == "" {
-		return fmt.Errorf("tool package is required")
 	}
 	lock, err := acquireExclusive(ctx, env)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	return runGo(ctx, env.ToolsDir, "off", "get", "-tool", packageSpec)
+	if err := os.MkdirAll(env.Dir, 0o700); err != nil {
+		return err
+	}
+	if err := ensureEnvTools(ctx, env); err != nil {
+		return err
+	}
+	return runGo(ctx, env.ToolsDir, "off", "get", module)
 }
 
-func RemoveTool(ctx context.Context, name, packagePath string) error {
-	env, err := Require(name)
+func DropModule(ctx context.Context, name, modulePath string) error {
+	env, err := Resolve(name)
 	if err != nil {
 		return err
 	}
-	packagePath = strings.TrimSpace(packagePath)
-	if packagePath == "" {
-		return fmt.Errorf("tool package is required")
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := runGo(ctx, env.ToolsDir, "off", "mod", "edit", "-droprequire="+modulePath); err != nil {
+		return err
+	}
+	return runGo(ctx, env.ToolsDir, "off", "mod", "tidy")
+}
+
+func AddTool(ctx context.Context, name, tool string) error {
+	env, err := Resolve(name)
+	if err != nil {
+		return err
+	}
+	lock, err := acquireExclusive(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := ensureEnvTools(ctx, env); err != nil {
+		return err
+	}
+	return runGo(ctx, env.ToolsDir, "off", "get", "-tool", tool)
+}
+
+func DropTool(ctx context.Context, name, packagePath string) error {
+	env, err := Resolve(name)
+	if err != nil {
+		return err
 	}
 	lock, err := acquireExclusive(ctx, env)
 	if err != nil {
@@ -456,7 +432,8 @@ func commandForWorkFile(ctx context.Context, env Environment, workFile, dir, pro
 	cmd.Dir = dir
 	cmd.Env = withEnv(os.Environ(), "GOWORK", workFile)
 	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV", env.Name)
-	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKSPACE", workFile)
+	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKSPACE", filepath.Dir(workFile))
+	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKFILE", workFile)
 	return cmd
 }
 
@@ -486,4 +463,41 @@ func withEnv(values []string, key, value string) []string {
 		}
 	}
 	return append(out, prefix+value)
+}
+
+func ensureEnvTools(ctx context.Context, env Environment) error {
+	if err := os.MkdirAll(env.ToolsDir, 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(env.ToolsDir, "go.mod")); os.IsNotExist(err) {
+		return runGo(ctx, env.ToolsDir, "off", "mod", "init", env.ToolsMod)
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+func ListTools(ctx context.Context, name string) ([]string, error) {
+	env, err := Resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := AcquireShared(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	body, err := os.ReadFile(filepath.Join(env.ToolsDir, "go.mod"))
+	if err != nil {
+		return nil, err
+	}
+	var tools []string
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "tool ") {
+			tools = append(tools, strings.TrimSpace(strings.TrimPrefix(line, "tool ")))
+		}
+	}
+	sort.Strings(tools)
+	return tools, nil
 }
