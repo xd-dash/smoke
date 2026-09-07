@@ -39,3 +39,23 @@ jobs:
           work="$SMOKE_ENV_DIR/native/go.work"
           grep -F 'github.com/dash-xd/github-cdn@' <<<"$(go env GOMODCACHE >/dev/null; printf '%s' "$resolved")"
           GOWORK="$work" go work edit -json >/dev/null
+      - name: Verify default Go tool profile
+        shell: bash
+        env:
+          SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-default-envs
+          GOPROXY: direct
+          GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth,github.com/dash-xd/agni
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/smoke-default"
+          go build -o "$smoke" ./cmd/smoke
+
+          "$smoke" default show | grep -Fx 'github.com/dash-xd/github-cdn@go'
+          "$smoke" default show | grep -Fx 'github.com/dash-xd/github-device-auth/cmd/github-device-auth@main'
+          "$smoke" default show | grep -Fx 'github.com/dash-xd/agni@main'
+
+          "$smoke" default create operator
+          tools="$SMOKE_ENV_DIR/operator/tools/go.mod"
+          grep -F 'github.com/dash-xd/github-cdn' "$tools"
+          grep -F 'github.com/dash-xd/github-device-auth' "$tools"
+          grep -F 'github.com/dash-xd/agni' "$tools"
