@@ -1,50 +1,17 @@
 # Smoke / Logmash idioms
 
-This file is the maintenance contract for `xd-dash/smoke`. Focused docs explain usage; this file records architectural invariants.
+This file is the maintenance contract for `xd-dash/smoke`. Smoke is a self-composed Go executable plus named execution environments. It is not an installation-profile repository, runtime plugin host, or replacement package manager.
 
 ## Core identity
 
-Smoke is a self-composed Go executable plus named execution environments. It is not a runtime plugin host and it is not a replacement package manager.
-
-- Compiled-in commands/providers are ordinary Go packages selected by Go imports.
-- Imported command packages register through `command.Register` during initialization.
-- The composition entrypoint owns the normalized component import list and `identity.SetComponents(...)`.
+- Compiled-in commands/providers are ordinary Go packages selected by imports.
+- Environment tools are Go `tool` dependencies executed with `go tool` inside immutable environment snapshots.
 - `commands`, `compose`, `env`, and `inspect` are core names.
 - Do not reintroduce PATH-based compiled-command discovery, `.so` plugins, or a resident plugin daemon.
-- Environment tools are Go `tool` dependencies executed with `go tool` inside an environment snapshot; they are not compiled Smoke commands.
 
-## Dependency direction
+## Environment identity
 
-```text
-compiled optional command/provider
-            |
-            v
-      Smoke core contracts
-
-named Smoke environment
-    +-- Go workspace modules
-    +-- Go tool dependencies
-    +-- native executables invoked generically
-```
-
-Core packages must not import every optional capability merely for discovery. Go composition determines compiled capabilities; `go.work` and the environment tools module determine environment-scoped modules/tools.
-
-## Runtime identity
-
-Smoke keeps composition identity separate from environment-workspace identity:
-
-```text
-composition digest = compiled component set
-workspace digest   = immutable Go workspace/tool snapshot
-```
-
-Exact Git SHA/build qualification remains outside Smoke, normally in Huram.
-
-## Environment/workspace invariants
-
-A Smoke environment is a named execution composition whose dependency authority is Go workspace/tool state.
-
-Canonical mutable state is intentionally small:
+A Smoke environment is a local execution composition whose dependency authority is Go workspace/tool state:
 
 ```text
 <env>/
@@ -54,47 +21,30 @@ Canonical mutable state is intentionally small:
     └── go.sum
 ```
 
-Rules:
-
-- `go.work` is authoritative for local/versioned Go modules used by the environment.
-- `tools/go.mod` is authoritative for environment-scoped Go `tool` dependencies.
-- Do not mirror Go module/tool dependencies into a Smoke JSON/YAML graph.
-- Workspace/tool mutation uses ordinary Go commands so Go owns versions, sums, replacements, exclusions, and tool resolution.
-- Canonical mutation uses the cross-process environment lock.
-- Long-lived execution snapshots canonical state under a short shared lock, releases the lock, and runs against an immutable content-addressed snapshot.
-- Equal Go workspace/tool state reuses the same digest/path; old snapshots are never mutated.
-- Child activation uses `GOWORK`, `SMOKE_ENV`, and environment workspace identity. Never mutate process-global cwd/GOWORK to implement environment execution.
-
-External source roots such as Terraform roots are caller-owned until a future explicit resource-root primitive includes them in the environment digest. Qualification therefore records their exact source/seed identities separately.
-
-## Seed is a shared operation name, not a shared provider
-
-Use **seed** for exact-source destination preparation, but do not centralize seed implementations merely because they share the verb.
+The environment name is an operator-local role/lifecycle label. It does not imply a recipe or profile.
 
 ```text
-ghxd/worktree seed
-    GitHub/Git-specific implementation
-    repository + exact SHA
-    -> detached worktree
-
-Agni tf seed
-    Agni-specific Terraform source implementation
-    selected embedded modules
-    -> Terraform modules/
-
-Astrochicken seed
-    recipe-specific source implementation
-    embedded recipe .tf files
-    -> Terraform composition root
+probe
+us-west1
+experiment-7
+gateway-test
 ```
 
-`github-worktree seed` remains owned by the ghxd/GitHub tooling path. Agni MUST NOT import or reuse ghxd/worktree seeding; its `tf seed` path has different inputs, lifecycle, and filesystem semantics. Shared vocabulary does not imply a shared provider interface or implementation.
+are all ordinary names. Smoke MUST NOT infer installation policy from them.
 
-Do not introduce `materialize` as a competing public command, package API, or architectural term for these exact-source preparation operations.
+## Immutable workspace invariants
+
+- `go.work` owns environment modules.
+- `tools/go.mod` owns environment tools.
+- Go owns versions, sums, replacements, exclusions, and tool resolution.
+- Canonical mutation remains protected by the environment lock.
+- Long-running children use immutable content-addressed snapshots after releasing the canonical lock.
+- Equal Go workspace/tool state reuses the same snapshot.
+- Child activation uses `GOWORK`, `SMOKE_ENV`, and workspace identity rather than process-global cwd/environment mutation.
+
+External roots such as Terraform installations remain caller/profile-owned until an explicit future root primitive includes them in the Smoke digest.
 
 ## Generic tool execution
-
-Environment tools run through the immutable workspace:
 
 ```bash
 smoke env tool run <env> <tool> [args ...]
@@ -102,45 +52,56 @@ smoke env tool run <env> <tool> [args ...]
 
 This is a thin `go tool <tool> ...` boundary. Smoke does not reinterpret the tool's domain language.
 
-Prefer short tool names when the module path already supplies ownership/context. Avoid duplicative names such as `agni-terraform` when `github.com/dash-xd/agni/cmd/tf` plus the environment context already identifies the implementation.
-
 ## Generic Terraform execution
 
-Terraform is an authoritative native contract, not a Go library dependency of Smoke:
-
 ```bash
-smoke env terraform <env> --dir <terraform-root> -- init
-smoke env terraform <env> --dir <terraform-root> -- plan
-smoke env terraform <env> --dir <terraform-root> -- apply
-smoke env terraform <env> --dir <terraform-root> -- output
-smoke env terraform <env> --dir <terraform-root> -- destroy
+smoke env terraform <env> --dir <root> -- init
+smoke env terraform <env> --dir <root> -- plan
+smoke env terraform <env> --dir <root> -- apply
+smoke env terraform <env> --dir <root> -- output
+smoke env terraform <env> --dir <root> -- destroy
 ```
 
-Smoke snapshots the environment, locates the installed `terraform` executable, sets the child environment, and forwards arguments unchanged. Terraform owns `.tf`, providers, variables, backends, state, plans, and lifecycle semantics.
+Terraform remains the authoritative native contract for HCL, providers, variables, backends, state, plans, and lifecycle.
 
-## Environment recipes
+## Installation profiles live above Smoke
 
-A deployment/probe such as Astrochicken is a recipe above Smoke core:
+Smoke does not own Astrochicken, Gateway, or other installation recipes. Those profiles may be installed as exact environment tools from their owning module.
+
+Example:
+
+```bash
+smoke env create probe
+smoke env tool add probe github.com/dash-xd/agni/cmd/astrochicken@<sha>
+smoke env tool run probe astrochicken seed <root>
+smoke env terraform probe --dir <root> -- plan
+```
+
+The profile tool owns its own configuration and internal shared-module dependency graph. Smoke MUST NOT require the operator to enumerate those dependencies separately.
+
+This means the old two-tool path is retired:
 
 ```text
-Astrochicken environment
-    +-- selected exact Go tools
-    |     +-- astrochicken
-    |     `-- tf
-    +-- seeded ordinary Terraform root
-    `-- native terraform
+Astrochicken tool
++
+tf seed --module ...
 ```
 
-The recipe name and deployment policy do not belong in Smoke's generic environment implementation. The current recipe tool may live in Smoke temporarily, but it is not linked into stock Smoke.
+A complete profile seed is one operation from Smoke's perspective.
 
-The intended seed path is concise and explicit:
+## Seed vocabulary
 
-```bash
-smoke env tool run astrochicken astrochicken seed <root>
-smoke env tool run astrochicken tf seed --module ... <root>
+`seed` is a semantic preparation verb, not a shared implementation contract.
+
+```text
+ghxd worktree seed
+    Git/worktree implementation
+
+Agni profile seed
+    installation-root/filesystem implementation
 ```
 
-The first `astrochicken` identifies the environment; the second is the exact recipe tool selected into that environment. Do not append implementation-detail suffixes such as `-root` to the tool name.
+Smoke MUST NOT unify unrelated seed implementations merely because they share a verb.
 
 ## Composition versus environment
 
@@ -149,33 +110,26 @@ smoke compose = optional Go packages linked into Smoke
 smoke env     = Go modules/tools and child execution context
 ```
 
-`smoke env run` re-execs Smoke for compiled commands. `smoke env tool run` executes environment tools. `smoke env exec` executes arbitrary native programs. Keep those boundaries distinct.
+`smoke env run` re-execs Smoke for compiled commands. `smoke env tool run` executes environment tools. `smoke env exec` executes arbitrary native programs.
 
 ## Provider registry invariants
 
 Provider registries are for typed runtime dispatch capabilities, not build/root seeding or generic tool discovery.
 
-- providers are supplied by Go composition/callers, never discovered from PATH;
+- providers are supplied by Go composition/callers;
 - schemes are normalized and duplicates invalid;
-- keep provider contracts small and capability-specific;
-- prefer narrow optional interfaces over a catch-all provider;
-- do not use a provider merely to seed Terraform source or forward Terraform CLI arguments.
+- contracts remain narrow and capability-specific;
+- do not introduce providers merely to seed Terraform files or forward Terraform arguments.
 
-The experimental Smoke↔Agni Terraform provider bridge is retired.
+## ghxd boundary
 
-## ghxd / worktree idiom
+`ghxd` remains GitHub-specific. `github-worktree seed` owns Git repository/SHA/auth/object/worktree semantics. Installation-profile seeding is unrelated implementation owned by the profile repository.
 
-`ghxd` remains GitHub-specific. Worktree preparation uses `seed` and exact SHA inputs. Its implementation remains in the GitHub/Git tooling path and is not a generic seeding library for unrelated domains.
+## Logmash / durable Logma boundary
 
-## Logmash runtime invariants
+Logmash remains ephemeral receive/route/callback runtime. `xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
 
-Logmash remains ephemeral receive/route/callback runtime. Stdout is enabled by default; removing stdout is the normal transition to unattended operation. Context cancellation and explicit ownership remain preferred over shared mutable state. The unattended session registry is local supervision metadata, not durable Logma state.
-
-## Durable Logma boundary
-
-`xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
-
-## Cross-repository authority boundary
+## Cross-repository authority
 
 ```text
 Huram
@@ -183,33 +137,24 @@ Huram
        |
        v
 Smoke
-  environment/workspace/tool composition + immutable execution
+  generic environment/workspace/tool execution
        |
        v
-Agni
-  generic infrastructure modules + independent `tf seed`
+Agni installation profile
+  profile config + lifecycle + shared infrastructure primitives
        |
        v
 native Terraform/gcloud/Butane/QEMU
 ```
 
-Smoke must not persist Huram credentials/business values. Agni must not own Smoke environment recipes. Huram must not duplicate generic Smoke environment or Agni infrastructure implementation.
-
 ## Change protocol
 
-When modifying Smoke:
-
-1. Preserve the smallest native composition primitive that satisfies the requirement.
-2. Keep Go authoritative for Go modules/tools and Terraform authoritative for Terraform.
-3. Use `seed` for exact-source destination preparation, but keep domain-specific seed implementations independent.
-4. Prefer environment tools over new compiled providers when the capability is naturally a CLI/seed operation.
-5. Prefer short, non-redundant tool names whose repository/module path already establishes ownership.
-6. Keep deployment recipes outside generic Smoke core.
-7. Preserve immutable snapshots and short canonical locks.
-8. Keep process-global cwd/environment mutation out of reusable execution paths.
-9. Preserve exact-source qualification outside Smoke runtime identity.
-10. Add focused tests for parser/environment/tool/provider/lifecycle invariants touched.
-11. Run `go vet ./...` and `go test -race ./...` on the exact final candidate.
-12. Update this maintenance contract when a responsibility boundary changes.
-
-Before adding a daemon, custom dependency graph, runtime plugin mechanism, asset package manager, or provider abstraction, first verify the requirement cannot be expressed through Go composition, named environments, `go.work`/`go.mod`, environment tools, immutable snapshots, `env exec`, domain-specific `seed`, or the authoritative native tool itself.
+1. Keep Smoke generic; profile names do not enter Smoke core.
+2. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform.
+3. Let installation profiles own their internal dependency graph.
+4. Never make operators restate profile dependencies through Smoke.
+5. Preserve immutable snapshots and short canonical locks.
+6. Keep process-global cwd/environment mutation out of reusable execution paths.
+7. Preserve exact-source qualification outside Smoke runtime identity.
+8. Use provider registries only for genuine runtime dispatch.
+9. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
