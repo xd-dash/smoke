@@ -26,14 +26,14 @@ smoke env tool add astrochicken \
   github.com/dash-xd/agni/cmd/agni-terraform@<agni-sha>
 ```
 
-Materialize an ordinary Terraform root:
+Seed the ordinary Terraform root from exact recipe/module sources:
 
 ```bash
 root="$PWD/.astrochicken-tf"
 
-smoke env tool run astrochicken astrochicken-root "$root"
+smoke env tool run astrochicken astrochicken-root seed "$root"
 
-smoke env tool run astrochicken agni-terraform materialize \
+smoke env tool run astrochicken agni-terraform seed \
   --module regional-network \
   --module regional-internal-addresses \
   --module coreos-node \
@@ -54,6 +54,10 @@ smoke env terraform astrochicken --dir "$root" -- destroy
 ```
 
 No Terraform lifecycle operation is implemented by Astrochicken Go code.
+
+## Seed semantics
+
+`seed` is the same preparation idiom used by `github-worktree seed`: an exact source/tool writes authoritative source into a caller-owned destination. It does not create another dependency graph or reinterpret the source language.
 
 ## Network recipe
 
@@ -91,7 +95,7 @@ Smoke
   generic `go tool` and Terraform child execution
 
 Agni
-  generic reusable Terraform modules and `agni-terraform` materializer
+  generic reusable Terraform modules and `agni-terraform seed`
 
 Astrochicken
   ordinary Terraform root and domain policy
