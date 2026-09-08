@@ -3,12 +3,12 @@ package main
 import (
 	"os"
 
-	_ "github.com/xd-dash/smoke/cmd/logmash"
+	_ "github.com/xd-dash/smoke/logmash"
 	"github.com/xd-dash/smoke/identity"
-	"github.com/xd-dash/smoke/smokeapp"
+	"github.com/xd-dash/smoke/internal/cli"
 )
 
 func main() {
-	identity.SetComponents("github.com/xd-dash/smoke/cmd/logmash")
-	smokeapp.Main(os.Args[1:])
+	identity.SetComponents("github.com/xd-dash/smoke/logmash")
+	cli.Main(os.Args[1:])
 }
