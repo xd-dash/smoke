@@ -1,12 +1,9 @@
 // Package ghxd defines Smoke's GitHub tool environment.
 //
-// ghxd is intentionally GitHub-specific. Other source-control providers belong
-// beside ghxd as their own Smoke provider/tool environments rather than behind
-// a forge-neutral abstraction inside this package.
-//
-// Each external capability remains an ordinary Go tool. Smoke owns only the
-// named environment, immutable snapshot, and execution lifecycle. Credentials
-// and organization-specific values are never persisted here.
+// GitHub operations that are useful in-process belong in ordinary Go libraries
+// composed into Smoke. The ghxd environment is reserved for capabilities that
+// still benefit from an executable/tool boundary, such as exact detached
+// worktree seeding.
 package ghxd
 
 import (
@@ -21,19 +18,15 @@ const DefaultEnvironment = "ghxd"
 
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
-// ToolSpecs is the default GitHub capability set installed into the ghxd
-// workspace. GitHub-specific capability families may grow beneath ghxd when
-// reusable Go behavior exists. The in-repository worktree tool is pinned to an
-// exact qualified commit so an older Smoke binary cannot silently bootstrap a
-// newer seeding implementation from a movable ref.
+// ToolSpecs is the executable capability set installed into the ghxd
+// environment. Router-free github-cdn and github-device-auth behavior is linked
+// directly into Smoke and therefore does not belong here.
 var ToolSpecs = []string{
-	"github.com/dash-xd/github-cdn@go",
-	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
 	defaultWorktreeToolSpec,
 }
 
-// Apply composes ghxd into an existing Smoke environment using Go's native
-// tool dependency mechanism.
+// Apply composes the executable ghxd tool set into an existing Smoke
+// environment using Go's native tool dependency mechanism.
 func Apply(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -47,10 +40,8 @@ func Apply(ctx context.Context, name string) error {
 	return nil
 }
 
-// Bootstrap ensures a named Smoke environment exists and composes ghxd into
-// it. An empty name selects DefaultEnvironment. Re-running bootstrap is
-// intentionally idempotent: an existing environment is updated through the
-// same Go-native tool path rather than rejected.
+// Bootstrap ensures a named Smoke environment exists and installs the
+// executable ghxd tool set. An empty name selects DefaultEnvironment.
 func Bootstrap(ctx context.Context, name string) (environment.Environment, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

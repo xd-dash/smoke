@@ -16,7 +16,7 @@ import (
 	"github.com/xd-dash/smoke/internal/filelock"
 )
 
-const DefaultLogmash = "github.com/xd-dash/smoke/cmd/logmash"
+const DefaultLogmash = "github.com/xd-dash/smoke/logmash"
 
 type Manifest struct {
 	Components []string `json:"components"`
@@ -62,6 +62,7 @@ func Save(manifest Manifest) error {
 		return err
 	}
 	data = append(data, '\n')
+
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".composition-manifest-*.tmp")
 	if err != nil {
 		return err
@@ -103,9 +104,8 @@ func WithRemoved(manifest Manifest, importPath string) Manifest {
 	return manifest
 }
 
-// Update performs a locked read-modify-rebuild transaction. It prevents two
-// compose operations from both reading an old manifest and silently losing one
-// writer's change.
+// Update performs a locked read-modify-rebuild transaction so concurrent
+// composition changes cannot silently overwrite one another.
 func Update(ctx context.Context, transform func(Manifest) Manifest) (string, error) {
 	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
@@ -119,8 +119,6 @@ func Update(ctx context.Context, transform func(Manifest) Manifest) (string, err
 	return applyLocked(ctx, transform(manifest))
 }
 
-// Rebuild rebuilds the current desired composition under the same lock used by
-// mutation, so a rebuild cannot overwrite a concurrent add/remove with stale state.
 func Rebuild(ctx context.Context) (string, error) {
 	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
@@ -134,8 +132,6 @@ func Rebuild(ctx context.Context) (string, error) {
 	return applyLocked(ctx, manifest)
 }
 
-// Apply replaces the installed executable with exactly manifest. Prefer Update
-// for read-modify-write operations.
 func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	lock, err := acquire(ctx, filelock.Exclusive)
 	if err != nil {
@@ -145,9 +141,8 @@ func Apply(ctx context.Context, manifest Manifest) (string, error) {
 	return applyLocked(ctx, manifest)
 }
 
-// AcquireSpawnLock prevents composition replacement while a process is resolving
-// and starting the currently installed Smoke executable. Callers should release
-// it immediately after cmd.Start succeeds; it is not a lifetime lock.
+// AcquireSpawnLock prevents replacement while a child resolves and starts the
+// currently installed Smoke executable. Release it immediately after Start.
 func AcquireSpawnLock(ctx context.Context) (*filelock.Lock, error) {
 	return acquire(ctx, filelock.Shared)
 }
@@ -167,9 +162,6 @@ func applyLocked(ctx context.Context, manifest Manifest) (result string, retErr 
 		return "", err
 	}
 
-	// go mod tidy and go build are allowed to mutate the generated composition
-	// module. Snapshot it so a failed composition cannot leak dependency/version
-	// changes into a later rebuild.
 	snapshots, err := snapshotComposition(sourceDir)
 	if err != nil {
 		return "", err
@@ -302,8 +294,6 @@ func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
 	} else if err != nil {
 		return err
 	}
-	// Keep the composition module identity current without discarding versions
-	// already selected for optional components.
 	if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-module=smoke.local/composition", "-go=1.26"); err != nil {
 		return err
 	}
@@ -372,8 +362,6 @@ func restoreManifest(path string, data []byte, existed bool) error {
 func runGo(ctx context.Context, dir, goBin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, goBin, args...)
 	cmd.Dir = dir
-	// Recomposition is its own module operation. Never let an active Smoke
-	// environment's GOWORK alter dependency selection for the Smoke binary.
 	cmd.Env = withEnv(os.Environ(), "GOWORK", "off")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -398,7 +386,7 @@ func withEnv(values []string, key, value string) []string {
 func renderMain(manifest Manifest) string {
 	components := normalize(manifest.Components)
 	var b strings.Builder
-	b.WriteString("package main\n\nimport (\n\t\"os\"\n\t\"github.com/xd-dash/smoke/identity\"\n\t\"github.com/xd-dash/smoke/smokeapp\"\n")
+	b.WriteString("package main\n\nimport (\n\t\"os\"\n\t\"github.com/xd-dash/smoke/cli\"\n\t\"github.com/xd-dash/smoke/identity\"\n")
 	for _, component := range components {
 		fmt.Fprintf(&b, "\t_ %q\n", component)
 	}
@@ -406,7 +394,7 @@ func renderMain(manifest Manifest) string {
 	for _, component := range components {
 		fmt.Fprintf(&b, "\t\t%q,\n", component)
 	}
-	b.WriteString("\t)\n\tsmokeapp.Main(os.Args[1:])\n}\n")
+	b.WriteString("\t)\n\tcli.Main(os.Args[1:])\n}\n")
 	return b.String()
 }
 

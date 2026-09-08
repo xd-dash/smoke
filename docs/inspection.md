@@ -12,6 +12,8 @@ workspace digest
 
 The pair is useful when a smoke test fails because it tells you both what the Smoke binary was composed to do and which Go workspace/tool state the runtime saw.
 
+Inspection command wiring lives in the public `cli` package because both `cmd/smoke` and generated composition modules use the same dispatcher. Runtime identity itself remains in the reusable `identity` package.
+
 ## Composition identity ownership
 
 The composition entrypoint owns the complete logical component list. Both the canonical `cmd/smoke` entrypoint and self-generated compositions call `identity.SetComponents(...)` with the normalized component imports they link.
@@ -34,7 +36,7 @@ Smoke composition
   executable: /Users/me/go/bin/smoke
   go: go1.26.7
   components:
-    github.com/xd-dash/smoke/cmd/logmash
+    github.com/xd-dash/smoke/logmash
 Runtime
   environment: (none)
   workspace digest: (none)
@@ -55,7 +57,7 @@ smoke inspect --json
     "digest": "5c8...",
     "executable": "/Users/me/go/bin/smoke",
     "go_version": "go1.26.7",
-    "components": ["github.com/xd-dash/smoke/cmd/logmash"]
+    "components": ["github.com/xd-dash/smoke/logmash"]
   },
   "runtime": {
     "environment": "",
@@ -67,7 +69,7 @@ smoke inspect --json
 
 JSON uses empty strings for unavailable runtime values rather than display strings such as `(none)`. `schema` is the compatibility boundary for machine consumers; field names within schema 1 are intended to remain stable.
 
-When Smoke itself is running under `smoke env run`, the Runtime section reports the inherited `SMOKE_ENV`, workspace digest, and exact snapshot `go.work` path.
+When Smoke itself is running under `smoke env run`, the Runtime section reports the inherited `SMOKE_ENV`, workspace digest, and immutable snapshot directory from `SMOKE_ENV_WORKSPACE`. The exact snapshot `go.work` remains available separately as `SMOKE_ENV_WORKFILE`/`GOWORK`.
 
 The composition digest is intentionally a logical component-set identity. It is not a byte hash of the executable and does not replace a Git SHA or CI qualification run.
 
@@ -136,7 +138,7 @@ Verbose output adds:
 composition: <digest>
 environment: <name or none>
 workspace digest: <digest or none>
-workspace: <snapshot go.work path or none>
+workspace: <snapshot directory or none>
 lease: <session lease path>
 started: <timestamp>
 ```

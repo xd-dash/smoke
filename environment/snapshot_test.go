@@ -123,8 +123,11 @@ func TestWorkspaceCommandUsesSnapshotNotCanonicalWorkFile(t *testing.T) {
 	if got := values["GOWORK"]; got != workspace.WorkFile {
 		t.Fatalf("GOWORK=%q want snapshot %q", got, workspace.WorkFile)
 	}
-	if got := values["SMOKE_ENV_WORKSPACE"]; got != workspace.WorkFile {
-		t.Fatalf("SMOKE_ENV_WORKSPACE=%q want %q", got, workspace.WorkFile)
+	if got := values["SMOKE_ENV_WORKSPACE"]; got != filepath.Dir(workspace.WorkFile) {
+		t.Fatalf("SMOKE_ENV_WORKSPACE=%q want snapshot dir %q", got, filepath.Dir(workspace.WorkFile))
+	}
+	if got := values["SMOKE_ENV_WORKFILE"]; got != workspace.WorkFile {
+		t.Fatalf("SMOKE_ENV_WORKFILE=%q want snapshot work file %q", got, workspace.WorkFile)
 	}
 }
 

@@ -1,4 +1,4 @@
-package smokeapp
+package cli
 
 import (
 	"context"
@@ -8,106 +8,20 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 
 	"github.com/xd-dash/smoke/command"
 	"github.com/xd-dash/smoke/environment"
-	"github.com/xd-dash/smoke/selfbuild"
 )
-
-func Main(args []string) {
-	if err := Run(args); err != nil {
-		fmt.Fprintf(os.Stderr, "smoke: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func Run(args []string) error {
-	if len(args) == 0 {
-		return usageError()
-	}
-	switch args[0] {
-	case "commands":
-		for _, name := range command.Names() {
-			fmt.Println(name)
-		}
-		return nil
-	case "inspect":
-		return inspectRuntime(args[1:])
-	case "compose":
-		return runCompose(args[1:])
-	case "env":
-		return runEnv(args[1:])
-	default:
-		return command.Run(args[0], args[1:])
-	}
-}
-
-func runCompose(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: smoke compose <show|add|remove|rebuild> [import-path]")
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	switch args[0] {
-	case "show":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: smoke compose show")
-		}
-		manifest, err := selfbuild.Load()
-		if err != nil {
-			return err
-		}
-		for _, component := range manifest.Components {
-			fmt.Println(component)
-		}
-		return nil
-	case "add":
-		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
-			return fmt.Errorf("usage: smoke compose add <go-import-path>")
-		}
-		path, err := selfbuild.Update(ctx, func(manifest selfbuild.Manifest) selfbuild.Manifest {
-			return selfbuild.WithAdded(manifest, args[1])
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("rebuilt %s\n", path)
-		return nil
-	case "remove":
-		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
-			return fmt.Errorf("usage: smoke compose remove <go-import-path>")
-		}
-		path, err := selfbuild.Update(ctx, func(manifest selfbuild.Manifest) selfbuild.Manifest {
-			return selfbuild.WithRemoved(manifest, args[1])
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("rebuilt %s\n", path)
-		return nil
-	case "rebuild":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: smoke compose rebuild")
-		}
-		path, err := selfbuild.Rebuild(ctx)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("rebuilt %s\n", path)
-		return nil
-	default:
-		return fmt.Errorf("unknown compose operation %q", args[0])
-	}
-}
 
 func runEnv(args []string) error {
 	if len(args) == 0 {
 		return envUsage()
 	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
 	switch args[0] {
 	case "create":
 		if len(args) != 2 {
@@ -132,28 +46,7 @@ func runEnv(args []string) error {
 		}
 		return nil
 	case "show":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: smoke env show <name>")
-		}
-		env, err := environment.Require(args[1])
-		if err != nil {
-			return err
-		}
-		lock, err := environment.AcquireShared(ctx, env)
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-		work, err := os.ReadFile(env.WorkFile)
-		if err != nil {
-			return err
-		}
-		mod, err := os.ReadFile(filepath.Join(env.ToolsDir, "go.mod"))
-		if err != nil {
-			return err
-		}
-		fmt.Printf("env %s\nwork %s\ntools %s\n\n%s\n%s", env.Name, env.WorkFile, env.ToolsDir, work, mod)
-		return nil
+		return showEnvironment(ctx, args[1:])
 	case "inspect":
 		return inspectEnvironment(ctx, args[1:])
 	case "use":
@@ -170,6 +63,8 @@ func runEnv(args []string) error {
 		return runEnvModule(ctx, args[1:])
 	case "tool":
 		return runEnvTool(ctx, args[1:])
+	case "terraform":
+		return terraformInEnv(ctx, args[1:])
 	case "run":
 		return runSmokeInEnv(ctx, args[1:])
 	case "exec":
@@ -183,16 +78,43 @@ func runEnv(args []string) error {
 	}
 }
 
+func showEnvironment(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: smoke env show <name>")
+	}
+	env, err := environment.Require(args[0])
+	if err != nil {
+		return err
+	}
+	lock, err := environment.AcquireShared(ctx, env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	work, err := os.ReadFile(env.WorkFile)
+	if err != nil {
+		return err
+	}
+	mod, err := os.ReadFile(filepath.Join(env.ToolsDir, "go.mod"))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("env %s\nwork %s\ntools %s\n\n%s\n%s", env.Name, env.WorkFile, env.ToolsDir, work, mod)
+	return nil
+}
+
 func runEnvModule(ctx context.Context, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: smoke env module <add|drop|list> <name> [module]")
 	}
+	name := args[1]
 	switch args[0] {
 	case "add":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: smoke env module add <name> <module@version-or-revision>")
 		}
-		module, err := environment.AddModule(ctx, args[1], args[2])
+		module, err := environment.AddModule(ctx, name, args[2])
 		if err != nil {
 			return err
 		}
@@ -202,12 +124,12 @@ func runEnvModule(ctx context.Context, args []string) error {
 		if len(args) != 3 {
 			return fmt.Errorf("usage: smoke env module drop <name> <module-path>")
 		}
-		return environment.DropModule(ctx, args[1], args[2])
+		return environment.DropModule(ctx, name, args[2])
 	case "list":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: smoke env module list <name>")
 		}
-		modules, err := environment.Modules(ctx, args[1])
+		modules, err := environment.Modules(ctx, name)
 		if err != nil {
 			return err
 		}
@@ -222,24 +144,25 @@ func runEnvModule(ctx context.Context, args []string) error {
 
 func runEnvTool(ctx context.Context, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: smoke env tool <add|remove|list> <name> [package]")
+		return fmt.Errorf("usage: smoke env tool <add|remove|list|run> <name> [package-or-tool] [args ...]")
 	}
+	name := args[1]
 	switch args[0] {
 	case "add":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: smoke env tool add <name> <package[@version]>")
 		}
-		return environment.AddTool(ctx, args[1], args[2])
+		return environment.AddTool(ctx, name, args[2])
 	case "remove":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: smoke env tool remove <name> <package>")
 		}
-		return environment.RemoveTool(ctx, args[1], args[2])
+		return environment.RemoveTool(ctx, name, args[2])
 	case "list":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: smoke env tool list <name>")
 		}
-		env, err := environment.Require(args[1])
+		env, err := environment.Require(name)
 		if err != nil {
 			return err
 		}
@@ -249,9 +172,11 @@ func runEnvTool(ctx context.Context, args []string) error {
 		}
 		goBin, err := exec.LookPath("go")
 		if err != nil {
-			return err
+			return fmt.Errorf("Smoke environments require a preinstalled Go toolchain: %w", err)
 		}
 		return runCommand(workspace.Command(ctx, workspace.ToolsDir, goBin, "tool"))
+	case "run":
+		return runEnvironmentTool(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown env tool operation %q", args[0])
 	}
@@ -386,13 +311,5 @@ func runCommand(cmd *exec.Cmd) error {
 }
 
 func envUsage() error {
-	return fmt.Errorf("usage: smoke env <create|list|show|inspect|use|drop|module|tool|run|exec|shell|build> ...")
-}
-
-func usageError() error {
-	names := command.Names()
-	if len(names) == 0 {
-		return fmt.Errorf("usage: smoke inspect | smoke <command> [args ...] | smoke compose <show|add|remove|rebuild> | smoke env <operation> ...")
-	}
-	return fmt.Errorf("usage: smoke inspect | smoke <%s> [args ...] | smoke compose <show|add|remove|rebuild> | smoke env <operation> ...", strings.Join(names, "|"))
+	return fmt.Errorf("usage: smoke env <create|list|show|inspect|use|drop|module|tool|terraform|run|exec|shell|build> ...")
 }

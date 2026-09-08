@@ -20,16 +20,20 @@ package main
 import (
     "os"
 
-    _ "github.com/xd-dash/smoke/cmd/logmash"
-    "github.com/xd-dash/smoke/smokeapp"
+    "github.com/xd-dash/smoke/cli"
+    "github.com/xd-dash/smoke/identity"
+    _ "github.com/xd-dash/smoke/logmash"
 )
 
 func main() {
-    smokeapp.Main(os.Args[1:])
+    identity.SetComponents("github.com/xd-dash/smoke/logmash")
+    cli.Main(os.Args[1:])
 }
 ```
 
 The blank import is the composition boundary. Importing the Logmash package causes its `init` function to register the in-process `logmash` command. Packages that are not imported are not linked into that Smoke executable.
+
+The repository follows ordinary Go package layout: `cmd/*` contains executable `package main` entrypoints; importable implementations such as `logmash`, `environment`, and `ghxd` live at normal package paths. `cli` is the narrow public composition surface used by `cmd/smoke` and generated composition modules.
 
 ## Self composition
 
@@ -38,7 +42,7 @@ Smoke requires a preinstalled Go toolchain for recomposition.
 The local desired composition is stored as a list of Go import paths. By default it contains:
 
 ```text
-github.com/xd-dash/smoke/cmd/logmash
+github.com/xd-dash/smoke/logmash
 ```
 
 Inspect it with:
@@ -301,22 +305,29 @@ The lifecycle rule is intentionally small:
 The intended dependency direction is:
 
 ```text
-smoke core
-  command registry
-  selfbuild/recomposition
-  application dispatcher
+reusable Smoke contracts
+  smoke root Provider/Registry
+  command
+  environment
+  ghxd
+  callback/provider/session
         ↑
-        │ imports core contracts
         │
-optional command/provider packages
-  cmd/logmash
+cli
+  command-line dispatch and process wiring
+        ↑
+        │
+optional importable command/provider packages
+  logmash
   future providers/commands
         ↑
-        │ selected by local composition imports
+        │ selected by imports
         │
-local smoke composition main.go
+cmd/smoke or generated composition package main
 ```
 
-Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
+`cmd/*` packages are executable entrypoints only. Importable command implementations do not live under `cmd`.
+
+Optional packages depend on reusable Smoke contracts. The composition root chooses what becomes part of the executable. The `cli` package is public because generated `smoke.local/composition` modules are external Go modules and must be able to invoke the same dispatcher as `cmd/smoke`.
 
 `xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash owns subscription and callback supervision; Smoke only owns composition plus the small unattended-runtime start/list/stop boundary.

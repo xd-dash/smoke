@@ -89,11 +89,19 @@ func TestSourceProfileHierarchy(t *testing.T) {
 }
 
 func TestResolveIntoAxiomAliases(t *testing.T) {
-	got, err := resolveInto([]intoSpec{{Provider: "axiom", Profile: "east", Target: "one"}, {Provider: "axiom", Profile: "eu", Target: "two"}, {Provider: "axiom", Profile: "default", Target: "three"}})
+	got, err := resolveInto([]intoSpec{
+		{Provider: "axiom", Profile: "east", Target: "one"},
+		{Provider: "axiom", Profile: "eu", Target: "two"},
+		{Provider: "axiom", Profile: "default", Target: "three"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"axiom://one?profile=axiom-us-east-1.logma.sh", "axiom://two?profile=axiom-eu-central-1.logma.sh", "axiom://three?profile=axiom.logma.sh"}
+	want := []string{
+		"axiom://one?profile=axiom-us-east-1.logma.sh",
+		"axiom://two?profile=axiom-eu-central-1.logma.sh",
+		"axiom://three?profile=axiom.logma.sh",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resolveInto = %#v, want %#v", got, want)
 	}
@@ -150,8 +158,4 @@ func TestDetachedAndForegroundFlagsAreRemoved(t *testing.T) {
 			t.Fatalf("expected %s to be rejected", flag)
 		}
 	}
-}
-
-func unattended(cfg cliArgs) bool {
-	return !cfg.Stdout && !cfg.Attached
 }

@@ -1,219 +1,125 @@
 # Smoke environments
 
-Smoke environments are named Go workspaces used to compose local modules and Go tool dependencies without installing those tools globally or changing the module manifests of the projects being exercised.
+Smoke environments are named Go workspaces and tool sets used to compose execution without installing every capability globally or changing the manifests of projects being exercised.
 
-The environment itself is first-class Smoke tooling. It is not a Smoke provider. Providers remain runtime transports/resources selected by optional Smoke commands.
+The reusable implementation is the ordinary Go package:
 
-## Representation
+```text
+github.com/xd-dash/smoke/environment
+```
 
-Each canonical environment is stored under the Smoke data directory (or `SMOKE_ENV_DIR` when overridden):
+The `smoke env ...` command family is only CLI wiring over that package. Environment semantics do not live in `cmd/smoke` or in an application catch-all package.
+
+Canonical state:
 
 ```text
 ~/.local/share/smoke/envs/<name>/
 ├── go.work
 └── tools/
     ├── go.mod
-    └── go.sum      # created when dependencies require it
+    └── go.sum
 ```
 
-`go.work` is the mutable workspace manifest. The `tools` module carries environment-scoped `tool` directives and their normal Go module requirements.
+Go remains authoritative for module/tool resolution. Smoke does not create a second JSON/YAML dependency graph.
 
-Creating an environment:
+## Create and compose
 
-```sh
+```bash
 smoke env create infra
-```
-
-produces the equivalent of:
-
-```go
-// go.work
-go 1.26
-
-use ./tools
-```
-
-and:
-
-```go
-// tools/go.mod
-module smoke.local/env/infra/tools
-
-go 1.26
-```
-
-There is intentionally no second JSON/YAML tool dependency graph. Go owns tool versions, requirements, replacements, exclusions, sums, and workspace resolution.
-
-## Workspace modules
-
-Add a local module to an environment:
-
-```sh
 smoke env use infra ~/src/agni
+smoke env module add infra example.com/module@<version-or-sha>
+smoke env tool add infra example.com/cmd/tool@<version-or-sha>
 ```
 
-Remove it:
+Local modules are added with `env use`; versioned modules can be composed through `env module add`. Environment tools use Go's `tool` directives.
 
-```sh
-smoke env drop infra ~/src/agni
+## Immutable snapshots
+
+Before `shell`, `exec`, `build`, `run`, tool execution, or Terraform execution, Smoke takes a short shared lock and writes/reuses a content-addressed snapshot of `go.work` plus the tools module. The canonical lock is released before the child starts.
+
+A running command therefore keeps the exact Go workspace/tool graph it started with while later canonical mutations affect only later snapshots.
+
+Child processes receive:
+
+```text
+SMOKE_ENV_WORKSPACE   <snapshot directory>
+SMOKE_ENV_WORKFILE    <snapshot directory>/go.work
+GOWORK                <snapshot directory>/go.work
 ```
 
-Both operations delegate to the Go workspace machinery. A `use` target must contain a `go.mod` file.
+## Execute environment tools
 
-Inspect environments:
-
-```sh
-smoke env list
-smoke env show infra
-```
-
-## Environment tools
-
-Add a Go tool dependency:
-
-```sh
-smoke env tool add infra golang.org/x/tools/cmd/stringer
-```
-
-A specific version may be selected with normal Go package/version syntax:
-
-```sh
-smoke env tool add infra example.com/tool/cmd/tool@v1.2.3
-```
-
-Remove a tool:
-
-```sh
-smoke env tool remove infra example.com/tool/cmd/tool
-```
-
-List tools visible through the selected workspace:
-
-```sh
+```bash
 smoke env tool list infra
+smoke env tool run infra <tool> [args ...]
 ```
 
-The tool dependency is fetched and versioned by Go. It is not installed into `$GOBIN` merely because it belongs to the environment.
+`tool run` is a thin invocation of `go tool <tool> ...` under the immutable environment snapshot.
 
-Canonical mutations (`create`, `use`, `drop`, tool add/remove) remain serialized with an exclusive cross-process environment lock.
+## Execute native programs
 
-## Immutable runtime workspace snapshots
-
-Long-lived environment commands no longer hold the canonical environment lock for their lifetime.
-
-Before `shell`, `exec`, `build`, `run`, or `tool list`, Smoke takes a short shared lock and reads one coherent canonical state. It then writes an immutable, content-addressed snapshot under the user cache containing:
-
-```text
-<cache>/smoke/env-workspaces/<env>/<digest>/
-├── go.work
-└── tools/
-    ├── go.mod
-    └── go.sum      # when present in the canonical environment
+```bash
+smoke env exec infra -- <program> [args ...]
+smoke env exec infra --dir ~/src/project -- <program> [args ...]
 ```
 
-The snapshot `go.work` preserves the canonical workspace's Go/toolchain/godebug/use/replace semantics. Local project paths are made absolute, while the environment tools module points at the copied `./tools` directory inside the snapshot.
+Use `env run` only for commands compiled into Smoke itself:
 
-The lock is released **before** the child command starts:
-
-```text
-canonical environment
-        │
-        │ short shared lock
-        ▼
-content-addressed snapshot
-        │
-        ├── release canonical lock
-        │
-        └── shell / exec / build / run
-```
-
-This means a shell can keep using the exact environment state it started with while another process changes the canonical environment:
-
-```sh
-# terminal A
-smoke env shell infra ~/src/agni
-
-# terminal B -- no need to wait for terminal A to exit
-smoke env use infra ~/src/firekv
-smoke env tool add infra golang.org/x/tools/cmd/stringer
-```
-
-Terminal A remains pinned to its old snapshot. A later environment command gets a new snapshot containing the new canonical state.
-
-Unchanged canonical state reuses the same digest/path. Old snapshots are deliberately cache state rather than temporary launch files, so unattended Logmash descendants can continue inheriting a valid `GOWORK` after their launcher exits.
-
-## Running in an environment
-
-Run an arbitrary process with the snapshot's `GOWORK`, plus `SMOKE_ENV` and `SMOKE_ENV_WORKSPACE`:
-
-```sh
-smoke env exec infra -- go tool stringer
-smoke env exec infra --dir ~/src/agni -- go test ./...
-```
-
-Launch a scoped shell:
-
-```sh
-smoke env shell infra ~/src/agni
-```
-
-Exiting that child shell returns to the original shell without mutating the parent shell environment.
-
-Build using the workspace:
-
-```sh
-smoke env build infra --dir ~/src/agni -- ./...
-```
-
-`smoke env build` is deliberately thin: it invokes the system `go build` under the selected snapshot and leaves package/build semantics to Go.
-
-## Compiled-in Smoke commands and Logmash
-
-Use `smoke env run` when the thing being executed is another compiled-in Smoke command:
-
-```sh
+```bash
 smoke env run infra -- logmash us:west:events
 ```
 
-or from a project directory:
-
-```sh
-smoke env run infra --dir ~/src/agni -- logmash us:west:events
-```
-
-`env run` does not mutate the parent Smoke process's working directory or environment. It snapshots the environment, releases the canonical lock, then starts Smoke itself as a child with the snapshot `GOWORK`. That child dispatches `logmash` through the ordinary compiled-in command registry.
-
-This still does **not** discover or start a separate `logmash` executable and does not use PATH-based command discovery.
+The distinction is deliberate:
 
 ```text
-parent Smoke
-    │
-    ├── snapshot selected environment
-    │
-    └── child Smoke
-            │
-            ├── compiled-in command registry
-            │       └── logmash
-            │
-            └── immutable GOWORK snapshot
+compiled Smoke capability -> env run
+Go environment tool       -> env tool run
+arbitrary native program  -> env exec
 ```
 
-An unattended Logmash runtime may re-exec Smoke again to cross the attached/unattended process-lifetime boundary. `GOWORK`, `SMOKE_ENV`, and `SMOKE_ENV_WORKSPACE` are inherited, so background lifetime stays pinned to the same environment snapshot.
+## Terraform
 
-Atomic recomposition replaces the installed Smoke filesystem entry, while already-running Smoke processes keep their existing image. Therefore a child spawn racing with a completed recomposition may start the newly installed composition. The guarantee is that Smoke re-execs Smoke itself, not that it always reproduces the exact parent process image.
+Terraform remains an external native prerequisite. Smoke provides a generic convenience façade that snapshots the environment and forwards Terraform arguments unchanged:
+
+```bash
+smoke env terraform infra --dir ./terraform -- init
+smoke env terraform infra --dir ./terraform -- plan
+smoke env terraform infra --dir ./terraform -- apply
+smoke env terraform infra --dir ./terraform -- output
+smoke env terraform infra --dir ./terraform -- destroy
+```
+
+Smoke does not parse HCL or replace Terraform state/provider semantics.
+
+A deployment environment can therefore compose a complete external profile tool without compiling the deployment into Smoke:
+
+```bash
+smoke env create astrochicken
+smoke env tool add astrochicken github.com/dash-xd/agni/cmd/probe@<exact-agni-sha>
+
+root="$PWD/.astrochicken-probe"
+smoke env tool run astrochicken probe seed "$root"
+
+smoke env terraform astrochicken --dir "$root" -- init
+smoke env terraform astrochicken --dir "$root" -- plan
+```
+
+The word `astrochicken` here is only an environment name. `probe` is the external Agni component/tool. Smoke does not infer one from the other and does not enumerate Probe's internal Terraform modules.
+
+## Source roots and future resource snapshots
+
+Today ordinary Terraform/profile roots are explicit source directories. Their exact source identity should be recorded by the qualifying workflow along with the Smoke environment digest.
+
+If Smoke later gains snapshot-owned resource roots, those resources MUST participate in the content digest before the snapshot can claim to identify them. `SMOKE_ENV_WORKSPACE` is deliberately the snapshot directory so a future `roots/` area can have an unambiguous home. Do not silently copy arbitrary files into the environment and leave them outside identity accounting.
 
 ## Composition versus environment
 
-The two concepts are intentionally separate:
-
 ```text
 smoke compose
-    = which optional Go packages are linked into the Smoke executable
+    = compiled optional Go packages in the Smoke executable
 
 smoke env
-    = which Go workspace/modules/tools are active while Smoke is used
+    = Go modules/tools plus child execution context
 ```
 
-For example, an installed Smoke composition may include Logmash, while `infra` and `dev` environments expose different project modules and different Go tools. An environment cannot make a command available if that command was not compiled into the Smoke executable it starts.
-
-This preserves import-time composition and keeps workspace selection out of the provider/runtime transport layer.
+Environment tools do not need to become compiled Smoke commands. This is the preferred model for complete external profile tools such as Agni Probe.

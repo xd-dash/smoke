@@ -1,4 +1,4 @@
-package smokeapp
+package cli
 
 import (
 	"context"
@@ -85,7 +85,6 @@ func inspectRuntime(args []string) error {
 
 func runtimeInspection() runtimeInspectionDocument {
 	info := identity.Current()
-	envName := strings.TrimSpace(os.Getenv("SMOKE_ENV"))
 	workspace := strings.TrimSpace(os.Getenv("SMOKE_ENV_WORKSPACE"))
 	if workspace == "" {
 		workspace = strings.TrimSpace(os.Getenv("GOWORK"))
@@ -100,7 +99,7 @@ func runtimeInspection() runtimeInspectionDocument {
 			Components: info.Components,
 		},
 		Runtime: runtimeContextJSON{
-			Environment:     envName,
+			Environment:     strings.TrimSpace(os.Getenv("SMOKE_ENV")),
 			WorkspaceDigest: identity.WorkspaceDigest(),
 			Workspace:       workspace,
 		},

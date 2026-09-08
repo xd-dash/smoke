@@ -33,8 +33,8 @@ func TestRegisterComponentRemainsCompatibilityAdditive(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDigestFromSnapshotPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "abc123", "go.work")
+func TestWorkspaceDigestFromSnapshotDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "abc123")
 	t.Setenv("SMOKE_ENV_WORKSPACE", path)
 	if got := WorkspaceDigest(); got != "abc123" {
 		t.Fatalf("WorkspaceDigest()=%q", got)

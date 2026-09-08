@@ -30,21 +30,21 @@ func TestRenderMainImportsAndEmbedsSelectedComponents(t *testing.T) {
 		t.Fatalf("generated main is invalid Go: %v\n%s", err, source)
 	}
 	for _, want := range []string{
+		`"github.com/xd-dash/smoke/cli"`,
 		`"github.com/xd-dash/smoke/identity"`,
-		`"github.com/xd-dash/smoke/smokeapp"`,
-		`_ "github.com/xd-dash/smoke/cmd/logmash"`,
+		`_ "github.com/xd-dash/smoke/logmash"`,
 		`_ "example.com/optional/provider"`,
 		`identity.SetComponents(`,
-		`"github.com/xd-dash/smoke/cmd/logmash",`,
+		`"github.com/xd-dash/smoke/logmash",`,
 		`"example.com/optional/provider",`,
-		`smokeapp.Main(os.Args[1:])`,
+		`cli.Main(os.Args[1:])`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("generated main missing %q:\n%s", want, source)
 		}
 	}
 	providerLine := "\t\t\"example.com/optional/provider\","
-	logmashLine := "\t\t\"github.com/xd-dash/smoke/cmd/logmash\","
+	logmashLine := "\t\t\"github.com/xd-dash/smoke/logmash\","
 	if got := strings.Count(source, providerLine); got != 1 {
 		t.Fatalf("generated identity contains optional provider %d times:\n%s", got, source)
 	}

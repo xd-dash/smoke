@@ -456,7 +456,8 @@ func commandForWorkFile(ctx context.Context, env Environment, workFile, dir, pro
 	cmd.Dir = dir
 	cmd.Env = withEnv(os.Environ(), "GOWORK", workFile)
 	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV", env.Name)
-	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKSPACE", workFile)
+	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKSPACE", filepath.Dir(workFile))
+	cmd.Env = withEnv(cmd.Env, "SMOKE_ENV_WORKFILE", workFile)
 	return cmd
 }
 
