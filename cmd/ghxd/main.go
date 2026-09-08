@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xd-dash/smoke/internal/cli"
+	"github.com/xd-dash/smoke/cli"
 )
 
 func main() {
