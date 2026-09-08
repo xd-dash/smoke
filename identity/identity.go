@@ -99,14 +99,16 @@ func Environment() string {
 	return strings.TrimSpace(os.Getenv("SMOKE_ENV"))
 }
 
+// Workspace returns the immutable Smoke snapshot directory for this process.
 func Workspace() string {
 	return strings.TrimSpace(os.Getenv("SMOKE_ENV_WORKSPACE"))
 }
 
+// WorkspaceDigest returns the content-addressed snapshot directory basename.
 func WorkspaceDigest() string {
-	work := Workspace()
-	if work == "" {
+	workspace := Workspace()
+	if workspace == "" {
 		return ""
 	}
-	return filepath.Base(filepath.Dir(work))
+	return filepath.Base(filepath.Clean(workspace))
 }
