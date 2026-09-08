@@ -174,9 +174,31 @@ Provider registries are for typed runtime dispatch capabilities, not build/root 
 
 ## ghxd boundary
 
-`ghxd` remains GitHub-specific. `github-worktree seed` owns repository/SHA/auth/object/ref/worktree semantics. Installation-profile seeding is unrelated implementation owned by the profile repository.
+`ghxd` remains GitHub-specific. Prefer ordinary Go library composition for router-free GitHub operations that can run cleanly in-process; reserve the `ghxd` environment for capabilities that still benefit from an executable/tool boundary.
 
-`ghxd/worktree` is a reusable package while `cmd/github-worktree` is its independently installable executable surface. That library/command pair is intentional and does not justify a second standalone `ghxd` executable.
+Current split:
+
+```text
+smoke ghxd auth ...
+    github.com/dash-xd/github-device-auth/deviceauth
+    linked directly into Smoke
+
+smoke ghxd cdn ...
+    github.com/dash-xd/github-cdn/operations
+    linked directly into Smoke
+
+smoke ghxd worktree ...
+    github.com/xd-dash/smoke/cmd/github-worktree
+    executed as a Go tool from an immutable ghxd environment
+```
+
+`smoke ghxd bootstrap` MUST NOT install `github-cdn` or `github-device-auth` merely to call their reusable APIs. Bootstrap installs only actual executable capabilities. At present that is `github-worktree`.
+
+`github-worktree seed` owns repository/SHA/auth/object/ref/worktree semantics. `ghxd/worktree` is its reusable package while `cmd/github-worktree` is its independently installable executable surface. That library/command pair is intentional and does not justify a second standalone `ghxd` executable.
+
+Do not pull HTTP routers or server lifecycle into `ghxd` to reuse lower-level behavior. If an upstream package mixes reusable operations with router imports, split or expose a router-free package at the owning repository and compose that package instead.
+
+Installation-profile seeding remains unrelated implementation owned by the profile repository.
 
 ## Logmash / durable Logma boundary
 
@@ -208,13 +230,14 @@ native Terraform/gcloud/Butane/QEMU
 2. Preserve idiomatic Go package boundaries: `cmd` is executable-only; reusable implementation is importable outside `cmd`.
 3. Keep the public `cli` package narrow: command-line composition/wiring only, with domain behavior remaining in reusable packages.
 4. Avoid duplicate executable surfaces and generic package names such as `smokeapp`.
-5. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
-6. Let installation profiles own their internal dependency graph and infrastructure metadata.
-7. Never make operators restate profile dependencies through Smoke.
-8. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
-9. Preserve environment-name/profile-identity orthogonality.
-10. Preserve immutable snapshots, short canonical locks, and the directory/file distinction between `SMOKE_ENV_WORKSPACE` and `SMOKE_ENV_WORKFILE`.
-11. Keep process-global cwd/environment mutation out of reusable execution paths.
-12. Preserve exact-source qualification outside Smoke runtime identity.
-13. Use provider registries only for genuine runtime dispatch.
-14. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
+5. Prefer direct Go library composition over bootstrapped tools when a capability has a router-free reusable API.
+6. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
+7. Let installation profiles own their internal dependency graph and infrastructure metadata.
+8. Never make operators restate profile dependencies through Smoke.
+9. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
+10. Preserve environment-name/profile-identity orthogonality.
+11. Preserve immutable snapshots, short canonical locks, and the directory/file distinction between `SMOKE_ENV_WORKSPACE` and `SMOKE_ENV_WORKFILE`.
+12. Keep process-global cwd/environment mutation out of reusable execution paths.
+13. Preserve exact-source qualification outside Smoke runtime identity.
+14. Use provider registries only for genuine runtime dispatch.
+15. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
