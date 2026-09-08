@@ -1,6 +1,18 @@
 # ghxd
 
-`ghxd` is Smoke's optional, Go-native GitHub tool environment and stable GitHub operator surface. `gh` means GitHub: other Git providers belong beside `ghxd`, not underneath it.
+`ghxd` is Smoke's Go-native GitHub tool environment and stable GitHub operator surface. `gh` means GitHub: other Git providers belong beside `ghxd`, not underneath it.
+
+The package and command surface are deliberately different Go concepts:
+
+```text
+github.com/xd-dash/smoke/ghxd
+    reusable GitHub composition package
+
+smoke ghxd ...
+    canonical operator surface
+```
+
+There is no separate `cmd/ghxd` executable. A second binary would duplicate the namespace already exposed by Smoke without providing an independent implementation contract.
 
 ## Default Smoke shape
 
@@ -96,11 +108,13 @@ The reusable library remains:
 github.com/xd-dash/smoke/ghxd/worktree
 ```
 
-The installable tool is:
+The independently installable tool is:
 
 ```text
 github.com/xd-dash/smoke/cmd/github-worktree
 ```
+
+This `cmd`/library pair is intentional: `cmd/github-worktree` is a real standalone tool, while `ghxd/worktree` contains reusable Git mechanics.
 
 The user-facing Smoke surface remains:
 
