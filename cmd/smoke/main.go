@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	_ "github.com/xd-dash/smoke/logmash"
+	"github.com/xd-dash/smoke/cli"
 	"github.com/xd-dash/smoke/identity"
-	"github.com/xd-dash/smoke/internal/cli"
+	_ "github.com/xd-dash/smoke/logmash"
 )
 
 func main() {
