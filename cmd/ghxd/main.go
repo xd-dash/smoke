@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xd-dash/smoke/smokeapp"
+	"github.com/xd-dash/smoke/internal/cli"
 )
 
 func main() {
 	args := append([]string{"ghxd"}, os.Args[1:]...)
-	if err := smokeapp.Run(args); err != nil {
+	if err := cli.Run(args); err != nil {
 		fmt.Fprintln(os.Stderr, "ghxd:", err)
 		os.Exit(1)
 	}
