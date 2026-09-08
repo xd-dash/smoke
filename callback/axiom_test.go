@@ -36,6 +36,8 @@ func TestParseAxiomCallbackWithDNSProfile(t *testing.T) {
 	got := cb.(Axiom)
 	want := Axiom{
 		Dataset:     "redis-events",
+		Provider:    "axiom",
+		Role:        "callback",
 		Domain:      "eu-central-1.aws.edge.axiom.co",
 		Profile:     "axiom.logma.sh",
 		AuthProfile: "axiom-default",
@@ -45,9 +47,73 @@ func TestParseAxiomCallbackWithDNSProfile(t *testing.T) {
 	}
 }
 
+func TestParseAxiomCallbackWithRouteConstraints(t *testing.T) {
+	cb, err := parseAxiomURL(mustURL(t, "axiom://redis-events?route-zone=xd.run&region=us-east"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cb.(Axiom)
+	if got.Provider != "axiom" {
+		t.Fatalf("provider = %q", got.Provider)
+	}
+	if got.Role != "callback" {
+		t.Fatalf("role = %q", got.Role)
+	}
+	if got.RouteZone != "xd.run" {
+		t.Fatalf("route zone = %q", got.RouteZone)
+	}
+	if got.Constraints.Region != "us-east" {
+		t.Fatalf("region = %q", got.Constraints.Region)
+	}
+}
+
+func TestResolveCallbackRouteByRegion(t *testing.T) {
+	old := callbackLookupTXT
+	t.Cleanup(func() { callbackLookupTXT = old })
+	callbackLookupTXT = func(_ context.Context, name string) ([]string, error) {
+		if name != "_axiom._callback.logmash.xd.run" {
+			t.Fatalf("lookup name = %q", name)
+		}
+		return []string{
+			"xd-route=v1;region=eu-central;edge=eu-central-1.aws;host=eu-central-1.aws.edge.axiom.co",
+			"xd-route=v1;region=us-east;edge=us-east-1.aws;host=us-east-1.aws.edge.axiom.co",
+		}, nil
+	}
+
+	route, err := resolveCallbackRoute("axiom", "callback", "xd.run", RouteConstraints{Region: "us-east"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.Host != "us-east-1.aws.edge.axiom.co" {
+		t.Fatalf("host = %q", route.Host)
+	}
+}
+
+func TestResolveCallbackRouteRejectsAmbiguousMatches(t *testing.T) {
+	old := callbackLookupTXT
+	t.Cleanup(func() { callbackLookupTXT = old })
+	callbackLookupTXT = func(_ context.Context, _ string) ([]string, error) {
+		return []string{
+			"xd-route=v1;region=us-east;edge=us-east-1.aws;host=a.example.com",
+			"xd-route=v1;region=us-east;edge=us-east-2.aws;host=b.example.com",
+		}, nil
+	}
+
+	if _, err := resolveCallbackRoute("axiom", "callback", "xd.run", RouteConstraints{Region: "us-east"}); err == nil {
+		t.Fatal("expected ambiguous route error")
+	}
+}
+
 func TestParseAxiomRequiresDataset(t *testing.T) {
 	if _, err := Parse([]string{"axiom://"}); err == nil {
 		t.Fatal("expected missing dataset error")
+	}
+}
+
+func TestAxiomRouteSourcesAreExclusive(t *testing.T) {
+	_, err := parseAxiomURL(mustURL(t, "axiom://events?route-zone=xd.run&domain=example.com"))
+	if err == nil {
+		t.Fatal("expected route source ambiguity error")
 	}
 }
 
