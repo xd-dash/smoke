@@ -10,10 +10,7 @@ import (
 	"github.com/xd-dash/smoke/ghxd"
 )
 
-const (
-	ghxdDeviceAuthTool = "github-device-auth"
-	ghxdWorktreeTool   = "github-worktree"
-)
+const ghxdWorktreeTool = "github-worktree"
 
 func init() {
 	command.Register("ghxd", runGHXD)
@@ -30,6 +27,8 @@ func runGHXD(args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: smoke ghxd show")
 		}
+		fmt.Println("builtin\tauth")
+		fmt.Println("builtin\tcdn")
 		fmt.Printf("environment\t%s\n", ghxd.DefaultEnvironment)
 		for _, spec := range ghxd.ToolSpecs {
 			fmt.Printf("tool\t%s\n", spec)
@@ -62,38 +61,12 @@ func runGHXD(args []string) error {
 		return runGHXDTool(ctx, name, rest...)
 	case "auth":
 		return runGHXDAuth(ctx, args[1:])
+	case "cdn":
+		return runGHXDCDN(ctx, args[1:])
 	case "worktree":
 		return runGHXDWorktree(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown ghxd operation %q", args[0])
-	}
-}
-
-func runGHXDAuth(ctx context.Context, args []string) error {
-	name, rest, err := parseGHXDEnvironment(args)
-	if err != nil || len(rest) == 0 {
-		return ghxdAuthUsage()
-	}
-
-	switch rest[0] {
-	case "device":
-		if len(rest) != 2 {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] device <client-id>")
-		}
-		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "device", rest[1])
-	case "poll":
-		if len(rest) != 3 {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] poll <client-id> <device-code>")
-		}
-		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "poll", rest[1], rest[2])
-	case "refresh":
-		if len(rest) != 3 && len(rest) != 4 {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] refresh <client-id> <refresh-token> [client-secret]")
-		}
-		toolArgs := append([]string{ghxdDeviceAuthTool, "refresh"}, rest[1:]...)
-		return runGHXDTool(ctx, name, toolArgs...)
-	default:
-		return fmt.Errorf("unknown ghxd auth operation %q", rest[0])
 	}
 }
 
@@ -119,7 +92,7 @@ func runGHXDTool(ctx context.Context, name string, args ...string) error {
 	}
 	goBin, err := exec.LookPath("go")
 	if err != nil {
-		return fmt.Errorf("ghxd requires a preinstalled Go toolchain: %w", err)
+		return fmt.Errorf("ghxd tools require a preinstalled Go toolchain: %w", err)
 	}
 	toolArgs := append([]string{"tool"}, args...)
 	return runCommand(workspace.Command(ctx, workspace.ToolsDir, goBin, toolArgs...))
@@ -144,10 +117,6 @@ func bootstrapSuffix(name string) string {
 	return " " + name
 }
 
-func ghxdAuthUsage() error {
-	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] <device|poll|refresh> ...")
-}
-
 func ghxdUsage() error {
-	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth|worktree> ...")
+	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth|cdn|worktree> ...")
 }
