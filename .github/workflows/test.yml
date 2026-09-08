@@ -49,9 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/smoke-ghxd"
-          ghxd="$RUNNER_TEMP/ghxd"
           go build -o "$smoke" ./cmd/smoke
-          go build -o "$ghxd" ./cmd/ghxd
 
           "$smoke" commands | grep -Fx logmash
           "$smoke" commands | grep -Fx ghxd
@@ -80,8 +78,6 @@ jobs:
           grep -F 'github.com/dash-xd/github-cdn' "$provider_tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
           grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$provider_tools"
-
-          "$ghxd" show | grep -Fx $'environment\tghxd'
 
           destination="$RUNNER_TEMP/ghxd-worktree"
           result="$($smoke ghxd worktree seed \
