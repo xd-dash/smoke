@@ -16,16 +16,6 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
-      - name: Resolve module graph
-        shell: bash
-        run: |
-          set -euo pipefail
-          go mod tidy
-          echo '---GO_MOD---'
-          cat go.mod
-          echo '---GO_SUM---'
-          cat go.sum
-          echo '---END_MODULES---'
       - run: go vet ./...
       - run: go test -race ./...
       - name: Verify Go-native module workspace composition
@@ -91,8 +81,10 @@ jobs:
           ! grep -F 'github.com/dash-xd/github-cdn' "$provider_tools"
           ! grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
 
-          "$smoke" ghxd auth 2>&1 | grep -F 'usage: smoke ghxd auth'
-          env -u GH_TOKEN -u GITHUB_TOKEN "$smoke" ghxd cdn snapshot xd-dash smoke main 2>&1 | grep -F 'GH_TOKEN or GITHUB_TOKEN is required'
+          auth_usage="$($smoke ghxd auth 2>&1 || true)"
+          grep -F 'usage: smoke ghxd auth' <<<"$auth_usage"
+          cdn_no_token="$(env -u GH_TOKEN -u GITHUB_TOKEN "$smoke" ghxd cdn snapshot xd-dash smoke main 2>&1 || true)"
+          grep -F 'GH_TOKEN or GITHUB_TOKEN is required' <<<"$cdn_no_token"
 
           destination="$RUNNER_TEMP/ghxd-worktree"
           result="$($smoke ghxd worktree seed \
