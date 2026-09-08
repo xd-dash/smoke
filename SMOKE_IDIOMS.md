@@ -9,6 +9,43 @@ Smoke is a self-composed Go executable plus named execution environments. It is 
 - `commands`, `compose`, `env`, and `inspect` are core names.
 - Do not reintroduce PATH-based compiled-command discovery, `.so` plugins, or a resident plugin daemon.
 
+## Go package layout
+
+Repository layout follows normal Go package boundaries rather than product-layer folders or duplicated command/library names:
+
+```text
+cmd/
+├── smoke/              # package main; canonical Smoke executable
+└── github-worktree/    # package main; independently installable tool
+
+cli/                    # public CLI composition surface used by cmd/smoke
+                        # and generated smoke.local/composition programs
+logmash/                # importable optional Smoke command package
+
+environment/            # reusable environment/workspace API
+ghxd/                   # reusable GitHub composition API
+callback/               # reusable callback API
+provider/               # reusable typed runtime providers
+command/                # compiled-command registration contract
+identity/               # runtime/composition identity
+selfbuild/              # self-composition/rebuild implementation
+session/                # Logmash session state
+internal/
+└── filelock/           # repository-private implementation detail
+```
+
+Package rules:
+
+- `cmd/<name>` contains only an executable `package main`. Importable implementation MUST NOT live under `cmd`.
+- Add a standalone command only when it has a meaningful independently installable contract. Do not duplicate a namespace already exposed by `smoke`; `smoke ghxd` is canonical, so there is no separate `cmd/ghxd`.
+- Reusable domain logic lives in a package named for its responsibility (`environment`, `ghxd`, `logmash`, etc.), not in generic buckets such as `smokeapp`, `util`, or `common`.
+- `cli` is intentionally public because generated composition modules are separate Go modules and must be able to call `cli.Main`/`cli.Run`. It owns argument dispatch and process wiring, not domain implementation.
+- Use `internal` only when code is genuinely inaccessible to external consumers and generated composition modules. Do not move a required composition contract under `internal` merely for visual tidiness.
+- Keep files within a package grouped by responsibility (`cli.go`, `compose.go`, `environment.go`, `terraform.go`, `ghxd.go`, `inspect.go`) rather than accumulating unrelated behavior in a monolithic `app.go`.
+- Package names remain short, lowercase, and non-stuttering. Directory/package identity should make imports read naturally.
+
+The root module package `github.com/xd-dash/smoke` remains the reusable runtime `Provider`/`Registry` API. The executable is `github.com/xd-dash/smoke/cmd/smoke`; these are different Go concepts and should not be collapsed merely because both carry the project name.
+
 ## Environment identity
 
 A Smoke environment is a local execution composition whose dependency authority is Go workspace/tool state:
@@ -139,6 +176,8 @@ Provider registries are for typed runtime dispatch capabilities, not build/root 
 
 `ghxd` remains GitHub-specific. `github-worktree seed` owns repository/SHA/auth/object/ref/worktree semantics. Installation-profile seeding is unrelated implementation owned by the profile repository.
 
+`ghxd/worktree` is a reusable package while `cmd/github-worktree` is its independently installable executable surface. That library/command pair is intentional and does not justify a second standalone `ghxd` executable.
+
 ## Logmash / durable Logma boundary
 
 Logmash remains ephemeral receive/route/callback runtime. `xd-dash/logma` remains the durable Fatline service/resource graph. Do not collapse durable Logma state into Smoke environments or unattended session metadata.
@@ -166,13 +205,16 @@ native Terraform/gcloud/Butane/QEMU
 ## Change protocol
 
 1. Keep Smoke generic; profile names do not enter Smoke core.
-2. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
-3. Let installation profiles own their internal dependency graph and infrastructure metadata.
-4. Never make operators restate profile dependencies through Smoke.
-5. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
-6. Preserve environment-name/profile-identity orthogonality.
-7. Preserve immutable snapshots, short canonical locks, and the directory/file distinction between `SMOKE_ENV_WORKSPACE` and `SMOKE_ENV_WORKFILE`.
-8. Keep process-global cwd/environment mutation out of reusable execution paths.
-9. Preserve exact-source qualification outside Smoke runtime identity.
-10. Use provider registries only for genuine runtime dispatch.
-11. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
+2. Preserve idiomatic Go package boundaries: `cmd` is executable-only; reusable implementation is importable outside `cmd`.
+3. Keep the public `cli` package narrow: command-line composition/wiring only, with domain behavior remaining in reusable packages.
+4. Avoid duplicate executable surfaces and generic package names such as `smokeapp`.
+5. Keep Go authoritative for environment modules/tools and Terraform authoritative for Terraform composition/lifecycle.
+6. Let installation profiles own their internal dependency graph and infrastructure metadata.
+7. Never make operators restate profile dependencies through Smoke.
+8. Treat one profile seed as one opaque preparation operation from Smoke's perspective.
+9. Preserve environment-name/profile-identity orthogonality.
+10. Preserve immutable snapshots, short canonical locks, and the directory/file distinction between `SMOKE_ENV_WORKSPACE` and `SMOKE_ENV_WORKFILE`.
+11. Keep process-global cwd/environment mutation out of reusable execution paths.
+12. Preserve exact-source qualification outside Smoke runtime identity.
+13. Use provider registries only for genuine runtime dispatch.
+14. Run `go vet ./...` and `go test -race ./...` on exact final candidates.
