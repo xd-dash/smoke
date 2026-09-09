@@ -1,10 +1,12 @@
 package dnstxt
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -35,9 +37,18 @@ type terraformVars struct {
 // Terraform variables consumed by the cfxd dns-txt root.
 func RenderTerraformVars(configJSON []byte) ([]byte, error) {
 	var cfg RouteConfig
-	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(configJSON))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("decode route config: %w", err)
 	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode route config: multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode route config: trailing data: %w", err)
+	}
+
 	cfg.Zone = strings.TrimSpace(cfg.Zone)
 	if cfg.Zone == "" {
 		return nil, fmt.Errorf("route config zone is required")
@@ -63,8 +74,10 @@ func RenderTerraformVars(configJSON []byte) ([]byte, error) {
 		}
 	}
 
-	// encoding/json orders map keys, but sort here as an explicit part of the
-	// projection contract and to make future alternate encoders easy to verify.
+	// Terraform resource identity is derived from route content, not list
+	// position. Reordering routes therefore cannot churn resource addresses.
+	// encoding/json sorts map keys, but keep the explicit ordering step so the
+	// projection remains deterministic if the encoder changes later.
 	keys := make([]string, 0, len(records))
 	for key := range records {
 		keys = append(keys, key)
