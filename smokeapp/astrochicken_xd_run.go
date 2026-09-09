@@ -13,11 +13,9 @@ import (
 	"github.com/xd-dash/smoke/environment"
 )
 
-const (
-	astrochickenXDRunEnvironment = "astrochicken-xd-run"
-	agniProbeToolPath             = "github.com/dash-xd/agni/cmd/probe"
-	cfxdDNSTXTToolPath            = "github.com/xd-dash/smoke/cmd/cfxd-dns-txt"
-)
+const astrochickenXDRunEnvironment = "astrochicken-xd-run"
+const agniProbeToolPath = "github.com/dash-xd/agni/cmd/probe"
+const cfxdDNSTXTToolPath = "github.com/xd-dash/smoke/cmd/cfxd-dns-txt"
 
 var exactGitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
