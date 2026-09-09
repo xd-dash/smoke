@@ -2,6 +2,7 @@ package dnstxt
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -96,12 +97,7 @@ func TestRenderTerraformVarsKeysAreStableAcrossReordering(t *testing.T) {
 	if err := json.Unmarshal(out, &b); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.Records) != len(b.Records) {
-		t.Fatalf("record counts differ: %d vs %d", len(a.Records), len(b.Records))
-	}
-	for key, record := range a.Records {
-		if got, ok := b.Records[key]; !ok || got != record {
-			t.Fatalf("record key %s changed across reorder", key)
-		}
+	if !reflect.DeepEqual(a.Records, b.Records) {
+		t.Fatalf("resource identities changed across reorder:\nfirst: %#v\nsecond: %#v", a.Records, b.Records)
 	}
 }
