@@ -70,8 +70,73 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 	if err != nil || len(rest) == 0 {
 		return ghxdAuthUsage()
 	}
+	store, err := ghxd.CredentialPath()
+	if err != nil {
+		return err
+	}
 
 	switch rest[0] {
+	case "login":
+		if len(rest) != 2 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] login <client-id>")
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "login", rest[1], store)
+	case "import":
+		if len(rest) != 3 || rest[1] != "--repo-secret-env" {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] import --repo-secret-env <environment-variable>")
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "import-env", rest[2], store)
+	case "status":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] status")
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "status", store)
+	case "ensure":
+		if len(rest) > 2 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] ensure [safety-margin-seconds]")
+		}
+		toolArgs := []string{ghxdDeviceAuthTool, "ensure", store}
+		if len(rest) == 2 {
+			toolArgs = append(toolArgs, rest[1])
+		}
+		return runGHXDTool(ctx, name, toolArgs...)
+	case "refresh":
+		if len(rest) > 2 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] refresh [safety-margin-seconds]")
+		}
+		toolArgs := []string{ghxdDeviceAuthTool, "refresh-local", store}
+		if len(rest) == 2 {
+			toolArgs = append(toolArgs, rest[1])
+		}
+		return runGHXDTool(ctx, name, toolArgs...)
+	case "token":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] token")
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "token", store)
+	case "export":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] export")
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "export", store)
+	case "sync":
+		if len(rest) != 3 && len(rest) != 5 {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
+		}
+		if rest[1] != "--repo" {
+			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
+		}
+		secret := ghxd.DefaultCredentialSecret
+		if len(rest) == 5 {
+			if rest[3] != "--secret" || rest[4] == "" {
+				return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
+			}
+			secret = rest[4]
+		}
+		if err := runGHXDTool(ctx, name, ghxdDeviceAuthTool, "ensure", store); err != nil {
+			return err
+		}
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "sync-secret", store, rest[2], secret)
 	case "device":
 		if len(rest) != 2 {
 			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] device <client-id>")
@@ -82,12 +147,6 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] poll <client-id> <device-code>")
 		}
 		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "poll", rest[1], rest[2])
-	case "refresh":
-		if len(rest) != 3 && len(rest) != 4 {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] refresh <client-id> <refresh-token> [client-secret]")
-		}
-		toolArgs := append([]string{ghxdDeviceAuthTool, "refresh"}, rest[1:]...)
-		return runGHXDTool(ctx, name, toolArgs...)
 	default:
 		return fmt.Errorf("unknown ghxd auth operation %q", rest[0])
 	}
@@ -133,7 +192,7 @@ func bootstrapSuffix(name string) string {
 }
 
 func ghxdAuthUsage() error {
-	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] <device|poll|refresh> ...")
+	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] <login|import|status|ensure|refresh|token|export|sync|device|poll> ...")
 }
 
 func ghxdUsage() error {
