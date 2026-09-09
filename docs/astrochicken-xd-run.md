@@ -48,7 +48,7 @@ terraform -chdir=agni-probe apply -var-file=../config/probe.tfvars
 DNS may be updated without re-planning Probe:
 
 ```bash
-go tool cfxd-dns-txt render ../config/xd-run.routes \
+go tool cfxd-dns-txt render config/xd-run.routes \
   > cfxd-dns-txt/routes.auto.tfvars.json
 
 terraform -chdir=cfxd-dns-txt init
