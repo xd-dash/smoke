@@ -4,39 +4,54 @@
 // beside ghxd as their own Smoke provider/tool environments rather than behind
 // a forge-neutral abstraction inside this package.
 //
-// Each external capability remains an ordinary Go tool. Smoke owns only the
-// named environment, immutable snapshot, and execution lifecycle. Credentials
-// and organization-specific values are never persisted here.
+// Each external capability remains an ordinary Go tool. Smoke owns the named
+// environment, immutable snapshot, and execution lifecycle. Mutable GitHub
+// credential checkpoints live under Smoke's local data root, outside the Go
+// workspace snapshot, and are never committed into environment manifests.
 package ghxd
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xd-dash/smoke/environment"
 )
 
 const DefaultEnvironment = "ghxd"
+const DefaultCredentialSecret = "HURAM_GITHUB_DEVICE_TOKEN"
 
 const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
-const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@113339509308abf42efce2e0305f67c65f6910be"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@32cc679110f6f4cb8d02c8913296b1c1aeb79627"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
-// ToolSpecs is the default GitHub capability set installed into the ghxd
-// workspace. Every default is pinned to an exact Git commit; role branches such
-// as github-cdn@go and movable refs such as @main are discovery/provenance
-// selectors, not runtime authority for a durable Smoke environment.
 var ToolSpecs = []string{
 	defaultGitHubCDNToolSpec,
 	defaultDeviceAuthToolSpec,
 	defaultWorktreeToolSpec,
 }
 
-// Apply composes ghxd into an existing Smoke environment using Go's native
-// tool dependency mechanism. The tool manifest update is transactional: if one
-// capability cannot be added, the environment's pre-call go.mod/go.sum are
-// restored instead of leaving a partially updated ghxd composition.
+// CredentialPath returns the local read/write checkpoint used by ghxd auth.
+// SMOKE_DATA_HOME is the explicit override. Otherwise XDG_DATA_HOME is honored
+// and the conventional ~/.local/share fallback is used on Unix-like systems.
+func CredentialPath() (string, error) {
+	root := strings.TrimSpace(os.Getenv("SMOKE_DATA_HOME"))
+	if root == "" {
+		if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
+			root = filepath.Join(xdg, "smoke")
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("resolve home directory: %w", err)
+			}
+			root = filepath.Join(home, ".local", "share", "smoke")
+		}
+	}
+	return filepath.Join(root, "ghxd", "credentials", "github-device.json"), nil
+}
+
 func Apply(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -48,10 +63,6 @@ func Apply(ctx context.Context, name string) error {
 	return nil
 }
 
-// Bootstrap ensures a named Smoke environment exists and composes ghxd into
-// it. An empty name selects DefaultEnvironment. Re-running bootstrap is
-// intentionally idempotent: an existing environment is updated through the
-// same Go-native tool path rather than rejected.
 func Bootstrap(ctx context.Context, name string) (environment.Environment, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
