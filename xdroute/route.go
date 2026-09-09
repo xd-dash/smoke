@@ -8,21 +8,21 @@ import (
 const Version uint = 1
 
 type Identity struct {
-	Service  string
-	Role     string
-	Provider string
+	Service  string `json:"service"`
+	Role     string `json:"role"`
+	Provider string `json:"provider"`
 }
 
 type Route struct {
-	Version uint
+	Version uint `json:"version,omitempty"`
 
-	Service  string
-	Role     string
-	Provider string
+	Service  string `json:"service"`
+	Role     string `json:"role"`
+	Provider string `json:"provider"`
 
-	Region string
-	Edge   string
-	Host   string
+	Region string `json:"region,omitempty"`
+	Edge   string `json:"edge,omitempty"`
+	Host   string `json:"host"`
 }
 
 func (i Identity) DNSName(zone string) (string, error) {
