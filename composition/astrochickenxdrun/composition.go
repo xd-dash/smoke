@@ -13,7 +13,7 @@ import (
 const DefaultEnvironment = "astrochicken-xd-run"
 
 const (
-	agniProbeToolSpec = "github.com/dash-xd/agni/cmd/probe@cc2a201d2271de1974bd59a78f9066cffefe940b"
+	agniProbeToolSpec  = "github.com/dash-xd/agni/cmd/probe@cc2a201d2271de1974bd59a78f9066cffefe940b"
 	cfxdDNSTXTToolSpec = "github.com/xd-dash/smoke/cmd/cfxd-dns-txt@92ac05da5f162beaf54b599242ebd14a06892719"
 )
 
