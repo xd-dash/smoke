@@ -24,7 +24,7 @@ const DefaultEnvironment = "ghxd"
 const DefaultCredentialSecret = "HURAM_GITHUB_DEVICE_TOKEN"
 
 const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
-const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@32cc679110f6f4cb8d02c8913296b1c1aeb79627"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@e451522fba10e7b33972312184ab587f4242c6ea"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
 var ToolSpecs = []string{
@@ -33,9 +33,6 @@ var ToolSpecs = []string{
 	defaultWorktreeToolSpec,
 }
 
-// CredentialPath returns the local read/write checkpoint used by ghxd auth.
-// SMOKE_DATA_HOME is the explicit override. Otherwise XDG_DATA_HOME is honored
-// and the conventional ~/.local/share fallback is used on Unix-like systems.
 func CredentialPath() (string, error) {
 	root := strings.TrimSpace(os.Getenv("SMOKE_DATA_HOME"))
 	if root == "" {
@@ -68,7 +65,6 @@ func Bootstrap(ctx context.Context, name string) (environment.Environment, error
 	if name == "" {
 		name = DefaultEnvironment
 	}
-
 	env, err := environment.Require(name)
 	if err != nil {
 		env, err = environment.Create(ctx, name)
