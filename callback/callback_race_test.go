@@ -9,7 +9,7 @@ import (
 
 type failingCallback struct{}
 
-func (failingCallback) Name() string { return "failing" }
+func (failingCallback) Name() string                          { return "failing" }
 func (failingCallback) Handle(context.Context, Message) error { return errors.New("boom") }
 
 func TestDispatcherConcurrentConfigurationAndDispatch(t *testing.T) {

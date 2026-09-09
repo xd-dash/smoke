@@ -10,7 +10,7 @@ import (
 
 type testProvider struct{ schemes []string }
 
-func (p testProvider) Schemes() []string { return p.schemes }
+func (p testProvider) Schemes() []string                                       { return p.schemes }
 func (testProvider) Run(context.Context, *url.URL, *callback.Dispatcher) error { return nil }
 
 func TestRegistryRejectsNilAndInvalidProviders(t *testing.T) {

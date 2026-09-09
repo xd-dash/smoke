@@ -1,14 +1,21 @@
 name: test
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
+concurrency:
+  group: smoke-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  quality:
+    name: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,8 +23,72 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
-      - run: go vet ./...
-      - run: go test -race ./...
+      - name: Verify gofmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'gofmt required for:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Build all commands
+        run: go build ./cmd/...
+      - name: Verify module metadata is tidy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod "$RUNNER_TEMP/go.mod.before"
+          if [[ -f go.sum ]]; then
+            cp go.sum "$RUNNER_TEMP/go.sum.before"
+          else
+            : > "$RUNNER_TEMP/go.sum.before"
+          fi
+          go mod tidy
+          cmp -s go.mod "$RUNNER_TEMP/go.mod.before" || {
+            echo 'go.mod changes after go mod tidy'
+            diff -u "$RUNNER_TEMP/go.mod.before" go.mod || true
+            exit 1
+          }
+          if [[ -f go.sum ]]; then
+            cmp -s go.sum "$RUNNER_TEMP/go.sum.before" || {
+              echo 'go.sum changes after go mod tidy'
+              diff -u "$RUNNER_TEMP/go.sum.before" go.sum || true
+              exit 1
+            }
+          elif [[ -s "$RUNNER_TEMP/go.sum.before" ]]; then
+            echo 'go.sum was removed by go mod tidy'
+            exit 1
+          fi
+
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Unit tests
+        run: go test ./...
+      - name: Race tests
+        run: go test -race ./...
+
+  composition:
+    name: smoke-composition
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
       - name: Verify Go-native module workspace composition
         shell: bash
         env:

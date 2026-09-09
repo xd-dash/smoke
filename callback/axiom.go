@@ -14,10 +14,16 @@ import (
 )
 
 // Axiom ingests callback messages into one runtime-selected Axiom dataset.
-// Dataset identity is never read from DNS. DNS profiles only resolve deployment
-// metadata such as the edge domain and a non-secret auth profile selector.
+// Dataset identity is never read from DNS. DNS resolves deployment metadata;
+// callback configuration carries routing intent such as provider, role, and
+// region constraints without hard-coding the concrete edge host.
 type Axiom struct {
-	Dataset         string
+	Dataset     string
+	Provider    string
+	Role        string
+	RouteZone   string
+	Constraints RouteConstraints
+
 	Domain          string
 	Profile         string
 	AuthProfile     string
@@ -34,7 +40,23 @@ func (a Axiom) Handle(ctx context.Context, message Message) error {
 	if a.Dataset == "" {
 		return fmt.Errorf("dataset is required")
 	}
+
 	domain := strings.TrimSpace(a.Domain)
+	if domain == "" && a.RouteZone != "" {
+		provider := strings.TrimSpace(a.Provider)
+		if provider == "" {
+			provider = "axiom"
+		}
+		role := strings.TrimSpace(a.Role)
+		if role == "" {
+			role = "callback"
+		}
+		route, err := resolveCallbackRoute(provider, role, a.RouteZone, a.Constraints)
+		if err != nil {
+			return fmt.Errorf("resolve Axiom callback route: %w", err)
+		}
+		domain = route.Host
+	}
 	if domain == "" {
 		domain = strings.TrimSpace(os.Getenv("AXIOM_DOMAIN"))
 	}
@@ -106,8 +128,28 @@ func parseAxiomURL(u *url.URL) (Callback, error) {
 	q := u.Query()
 	profileName := strings.TrimSpace(q.Get("profile"))
 	domain := strings.TrimSpace(q.Get("domain"))
-	if profileName != "" && domain != "" {
-		return nil, fmt.Errorf("axiom callback may use profile or domain, not both")
+	routeZone := strings.TrimSpace(q.Get("route-zone"))
+
+	sources := 0
+	for _, value := range []string{profileName, domain, routeZone} {
+		if value != "" {
+			sources++
+		}
+	}
+	if sources > 1 {
+		return nil, fmt.Errorf("axiom callback may use profile, domain, or route-zone, not more than one")
+	}
+
+	provider := strings.TrimSpace(q.Get("provider"))
+	if provider == "" {
+		provider = "axiom"
+	}
+	if provider != "axiom" {
+		return nil, fmt.Errorf("axiom callback provider must be axiom")
+	}
+	role := strings.TrimSpace(q.Get("role"))
+	if role == "" {
+		role = "callback"
 	}
 
 	authProfile := ""
@@ -121,7 +163,14 @@ func parseAxiomURL(u *url.URL) (Callback, error) {
 	}
 
 	return Axiom{
-		Dataset:         dataset,
+		Dataset:   dataset,
+		Provider:  provider,
+		Role:      role,
+		RouteZone: routeZone,
+		Constraints: RouteConstraints{
+			Region: strings.TrimSpace(q.Get("region")),
+			Edge:   strings.TrimSpace(q.Get("edge")),
+		},
 		Domain:          domain,
 		Profile:         profileName,
 		AuthProfile:     authProfile,
