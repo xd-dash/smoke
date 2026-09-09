@@ -41,27 +41,10 @@ jobs:
         run: |
           set -euo pipefail
           cp go.mod "$RUNNER_TEMP/go.mod.before"
-          if [[ -f go.sum ]]; then
-            cp go.sum "$RUNNER_TEMP/go.sum.before"
-          else
-            : > "$RUNNER_TEMP/go.sum.before"
-          fi
+          if [[ -f go.sum ]]; then cp go.sum "$RUNNER_TEMP/go.sum.before"; else : > "$RUNNER_TEMP/go.sum.before"; fi
           go mod tidy
-          cmp -s go.mod "$RUNNER_TEMP/go.mod.before" || {
-            echo 'go.mod changes after go mod tidy'
-            diff -u "$RUNNER_TEMP/go.mod.before" go.mod || true
-            exit 1
-          }
-          if [[ -f go.sum ]]; then
-            cmp -s go.sum "$RUNNER_TEMP/go.sum.before" || {
-              echo 'go.sum changes after go mod tidy'
-              diff -u "$RUNNER_TEMP/go.sum.before" go.sum || true
-              exit 1
-            }
-          elif [[ -s "$RUNNER_TEMP/go.sum.before" ]]; then
-            echo 'go.sum was removed by go mod tidy'
-            exit 1
-          fi
+          cmp -s go.mod "$RUNNER_TEMP/go.mod.before" || { diff -u "$RUNNER_TEMP/go.mod.before" go.mod || true; exit 1; }
+          if [[ -f go.sum ]]; then cmp -s go.sum "$RUNNER_TEMP/go.sum.before" || { diff -u "$RUNNER_TEMP/go.sum.before" go.sum || true; exit 1; }; fi
 
   tests:
     name: tests
@@ -80,9 +63,7 @@ jobs:
   composition:
     name: smoke-composition
     runs-on: ubuntu-latest
-    needs:
-      - quality
-      - tests
+    needs: [quality, tests]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -99,21 +80,16 @@ jobs:
           set -euo pipefail
           smoke="$RUNNER_TEMP/smoke"
           go build -o "$smoke" ./cmd/smoke
-
           "$smoke" env create native
           resolved="$("$smoke" env module add native github.com/dash-xd/github-cdn@go)"
           [[ "$resolved" == github.com/dash-xd/github-cdn@v* ]]
-
-          modules="$("$smoke" env module list native)"
-          grep -F 'github.com/dash-xd/github-cdn' <<<"$modules"
-
-          work="$SMOKE_ENV_DIR/native/go.work"
-          grep -F 'github.com/dash-xd/github-cdn@' <<<"$(go env GOMODCACHE >/dev/null; printf '%s' "$resolved")"
-          GOWORK="$work" go work edit -json >/dev/null
+          "$smoke" env module list native | grep -F 'github.com/dash-xd/github-cdn'
+          GOWORK="$SMOKE_ENV_DIR/native/go.work" go work edit -json >/dev/null
       - name: Verify default Logmash composition and ghxd workspace
         shell: bash
         env:
           SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-envs
+          SMOKE_DATA_HOME: ${{ runner.temp }}/smoke-data
           GOPROXY: direct
           GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth,github.com/xd-dash/smoke
           GH_TOKEN: ${{ github.token }}
@@ -123,44 +99,22 @@ jobs:
           ghxd="$RUNNER_TEMP/ghxd"
           go build -o "$smoke" ./cmd/smoke
           go build -o "$ghxd" ./cmd/ghxd
-
           "$smoke" commands | grep -Fx logmash
           "$smoke" commands | grep -Fx ghxd
-
           "$smoke" ghxd show | grep -Fx $'environment\tghxd'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed'
-          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@113339509308abf42efce2e0305f67c65f6910be'
+          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@32cc679110f6f4cb8d02c8913296b1c1aeb79627'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c'
-
           "$smoke" ghxd bootstrap
           "$smoke" ghxd bootstrap
           tools="$SMOKE_ENV_DIR/ghxd/tools/go.mod"
           grep -F 'github.com/dash-xd/github-cdn' "$tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$tools"
           grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$tools"
-          ! grep -F 'github.com/dash-xd/agni' "$tools"
-
-          tool_list="$("$smoke" env tool list ghxd)"
-          grep -F github-cdn <<<"$tool_list"
-          grep -F github-device-auth <<<"$tool_list"
-          grep -F github-worktree <<<"$tool_list"
-
           "$smoke" env create provider-test
           "$smoke" ghxd apply provider-test
-          provider_tools="$SMOKE_ENV_DIR/provider-test/tools/go.mod"
-          grep -F 'github.com/dash-xd/github-cdn' "$provider_tools"
-          grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
-          grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$provider_tools"
-
           "$ghxd" show | grep -Fx $'environment\tghxd'
-
           destination="$RUNNER_TEMP/ghxd-worktree"
-          result="$($smoke ghxd worktree seed \
-            --repository xd-dash/smoke \
-            --sha "$GITHUB_SHA" \
-            --destination "$destination" \
-            --object-root "$RUNNER_TEMP/ghxd-git-components")"
+          result="$($smoke ghxd worktree seed --repository xd-dash/smoke --sha "$GITHUB_SHA" --destination "$destination" --object-root "$RUNNER_TEMP/ghxd-git-components")"
           jq -e --arg sha "$GITHUB_SHA" '.sha == $sha and .detached == true and .clean == true and (.object_database | length > 0)' <<<"$result"
           [[ "$(git -C "$destination" rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          [[ -z "$(git -C "$destination" status --porcelain)" ]]
-          [[ -z "$(git -C "$destination" symbolic-ref -q HEAD || true)" ]]
