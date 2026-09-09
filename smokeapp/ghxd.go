@@ -120,25 +120,14 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 		}
 		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "export", store)
 	case "sync":
-		if len(rest) != 3 && len(rest) != 5 {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
-		}
-		if rest[1] != "--repo" {
-			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
-		}
-		secret := ghxd.DefaultCredentialSecret
-		recovery := ghxd.DefaultCredentialRecoverySecret
-		if len(rest) == 5 {
-			if rest[3] != "--secret" || rest[4] == "" {
-				return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
-			}
-			secret = rest[4]
-			recovery = secret + "_RECOVERY"
+		repo, secret, recovery, err := parseGHXDSync(rest[1:])
+		if err != nil {
+			return err
 		}
 		if err := runGHXDTool(ctx, name, ghxdDeviceAuthTool, "ensure", store); err != nil {
 			return err
 		}
-		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "sync-secret", store, rest[2], secret, recovery)
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "sync-secret", store, repo, secret, recovery)
 	case "device":
 		if len(rest) != 2 {
 			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] device <client-id>")
@@ -152,6 +141,40 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown ghxd auth operation %q", rest[0])
 	}
+}
+
+func parseGHXDSync(args []string) (string, string, string, error) {
+	repo := ""
+	secret := ghxd.DefaultCredentialSecret
+	recovery := ghxd.DefaultCredentialRecoverySecret
+	for len(args) > 0 {
+		if len(args) < 2 {
+			return "", "", "", ghxdSyncUsage()
+		}
+		value := args[1]
+		if value == "" {
+			return "", "", "", ghxdSyncUsage()
+		}
+		switch args[0] {
+		case "--repo":
+			repo = value
+		case "--secret":
+			secret = value
+		case "--recovery-secret":
+			recovery = value
+		default:
+			return "", "", "", ghxdSyncUsage()
+		}
+		args = args[2:]
+	}
+	if repo == "" || secret == "" || recovery == "" || secret == recovery {
+		return "", "", "", ghxdSyncUsage()
+	}
+	return repo, secret, recovery, nil
+}
+
+func ghxdSyncUsage() error {
+	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>] [--recovery-secret <name>]")
 }
 
 func runGHXDTool(ctx context.Context, name string, args ...string) error {
