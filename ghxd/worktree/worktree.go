@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/xd-dash/smoke/internal/filelock"
 )
 
 var (
@@ -89,7 +91,19 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	repositoryKey := sha256.Sum256([]byte(opts.Repository))
-	objectDatabase := filepath.Join(root, hex.EncodeToString(repositoryKey[:])+".git")
+	key := hex.EncodeToString(repositoryKey[:])
+	objectDatabase := filepath.Join(root, key+".git")
+	// The bare object database is shared across seeds for one repository. Git
+	// fetch/prune/worktree mutations are not a transactional API across separate
+	// processes, so serialize only the short database-mutation phase. The lock is
+	// released after the detached worktree has been created and verified; it is
+	// not a lifetime lock on the resulting worktree.
+	objectLock, err := filelock.Acquire(ctx, filepath.Join(root, ".locks", key+".lock"), filelock.Exclusive)
+	if err != nil {
+		return Result{}, fmt.Errorf("lock shared object database: %w", err)
+	}
+	defer objectLock.Close()
+
 	origin := "https://github.com/" + opts.Repository + ".git"
 	if _, err := os.Stat(objectDatabase); os.IsNotExist(err) {
 		if err := run(ctx, "", git, nil, "init", "--bare", objectDatabase); err != nil {
