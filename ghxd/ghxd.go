@@ -19,30 +19,31 @@ import (
 
 const DefaultEnvironment = "ghxd"
 
+const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@113339509308abf42efce2e0305f67c65f6910be"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
 // ToolSpecs is the default GitHub capability set installed into the ghxd
-// workspace. GitHub-specific capability families may grow beneath ghxd when
-// reusable Go behavior exists. The in-repository worktree tool is pinned to an
-// exact qualified commit so an older Smoke binary cannot silently bootstrap a
-// newer seeding implementation from a movable ref.
+// workspace. Every default is pinned to an exact Git commit; role branches such
+// as github-cdn@go and movable refs such as @main are discovery/provenance
+// selectors, not runtime authority for a durable Smoke environment.
 var ToolSpecs = []string{
-	"github.com/dash-xd/github-cdn@go",
-	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
+	defaultGitHubCDNToolSpec,
+	defaultDeviceAuthToolSpec,
 	defaultWorktreeToolSpec,
 }
 
 // Apply composes ghxd into an existing Smoke environment using Go's native
-// tool dependency mechanism.
+// tool dependency mechanism. The tool manifest update is transactional: if one
+// capability cannot be added, the environment's pre-call go.mod/go.sum are
+// restored instead of leaving a partially updated ghxd composition.
 func Apply(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("environment name is required")
 	}
-	for _, spec := range ToolSpecs {
-		if err := environment.AddTool(ctx, name, spec); err != nil {
-			return fmt.Errorf("add ghxd tool %s: %w", spec, err)
-		}
+	if err := environment.AddTools(ctx, name, ToolSpecs); err != nil {
+		return fmt.Errorf("compose ghxd tools: %w", err)
 	}
 	return nil
 }
