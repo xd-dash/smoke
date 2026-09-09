@@ -144,7 +144,16 @@ A running Smoke process and the installed Smoke filesystem entry are distinct af
 - Applying the ghxd default set is all-or-rollback at the environment manifest boundary.
 - `github-worktree` seeds the requested exact 40-character commit; an optional role ref proves provenance/reachability only and never replaces SHA authority.
 - The shared bare Git object database is mutable shared state. Serialize its init/fetch/prune/worktree-registration mutations per repository across processes. Release that lock after the worktree has been registered and verified; do not hold it for the lifetime of the resulting worktree.
-- GitHub credentials are runtime inputs. Never persist tokens in Smoke state, URLs, evidence, or Git configuration.
+- GitHub device-flow auth is a ghxd provider capability, not Smoke-core state. `dash-xd/github-device-auth` owns device initiation, polling, refresh exchange, strict bundle validation, atomic local persistence, and repository-secret synchronization; Smoke exposes those operations through `smoke ghxd auth`.
+- The local GitHub credential checkpoint is one complete v1 access+refresh bundle stored outside the Go environment/workspace snapshot under the Smoke data root. Never place OAuth credentials in `go.work`, `tools/go.mod`, immutable workspace snapshots, URLs, evidence, or Git configuration.
+- Access and refresh tokens are one credential transaction. Refresh must require a complete replacement pair and atomically replace the local `0600` checkpoint; never persist access and refresh tokens as independently rotating local files.
+- `auth ensure` is non-mutating while the access token remains fresh outside its safety margin. When stale, it refreshes locally with the device-flow public-client `client_id + refresh_token` exchange; normal refresh must not require WIF, GCP function discovery, a router, or GCS.
+- Repository Actions secrets are a CI credential checkpoint, not a readable object store. The normal pair is `HURAM_GITHUB_DEVICE_TOKEN` plus recovery journal `HURAM_GITHUB_DEVICE_TOKEN_RECOVERY`. Both contain a complete bundle.
+- Repository-secret synchronization writes the fresh bundle to the recovery journal first, then primary. Each remote secret write may retry bounded transient failures. The recovery secret is rollback/recovery material, not a parallel normal authority rail.
+- A recovery journal protects primary-cutover failures after a new pair can be written remotely; it cannot make a total GitHub secret-write outage atomic with the OAuth refresh exchange itself. If refresh succeeds but no repository secret can be updated, preserve the local fresh checkpoint and fail closed. Explicit device login or the retained bootstrap/recovery path is the recovery mechanism; never silently broaden to GCP/router authority.
+- `smoke ghxd auth sync` accepts explicit primary and recovery secret names. Custom primary names must not rely on an implicit recovery-name convention in higher-level automation.
+- Local operators and GitHub Actions should exercise the same implementation path: Smoke -> ghxd -> exact `github-device-auth` tool. Actions wrappers may select/import primary vs recovery checkpoints and expose outputs, but must not duplicate OAuth refresh logic.
+- The historical `github-device-auth-router` may remain useful for browser/serverless consumers and explicit bootstrap/recovery. It is not part of ghxd's normal authentication path.
 
 ## Logmash source grammar
 
@@ -386,8 +395,9 @@ When modifying Smoke/Logmash:
 11. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
 12. Keep DNS discovery free of credentials and runtime dataset/channel state.
 13. Keep provider-neutral configuration separate from provider-specific projection and Terraform state.
-14. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, or rebuild invariants touched by the change.
-15. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
-16. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+14. Keep mutable credential checkpoints outside immutable Go workspace state and preserve pair-wise refresh/recovery semantics.
+15. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, auth checkpoint, or rebuild invariants touched by the change.
+16. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
+17. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, or shared cross-provider Terraform state, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, shared cross-provider Terraform state, or a second GitHub credential backend, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, ghxd device credential checkpoint, or session start/list/stop primitives.
