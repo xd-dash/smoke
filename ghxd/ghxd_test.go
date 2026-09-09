@@ -15,7 +15,7 @@ func TestDefaults(t *testing.T) {
 	}
 	want := []string{
 		"github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed",
-		"github.com/dash-xd/github-device-auth/cmd/github-device-auth@bc3fcf6b341f5c2beaf4d46fb5aaf2fc9c6212a8",
+		"github.com/dash-xd/github-device-auth/cmd/github-device-auth@ba459bf3ca4bdfea178ffdbdf84d365ec6a81fe4",
 		"github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c",
 	}
 	if len(ToolSpecs) != len(want) {
