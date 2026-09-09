@@ -56,10 +56,10 @@ Together they identify the two axes relevant to a smoke-test runtime:
 
 Rules:
 
-- The composition digest must be derived from the component set owned by the currently running process, not from the mutable on-disk composition manifest. An old process after recomposition must not accidentally report the new manifest's identity.
+- The composition digest must be derived from the component set owned by the currently running process, not from the mutable on-disk composition manifest.
 - Component import paths are normalized, deduplicated, sorted, and hashed deterministically.
-- The composition digest is a **logical composition identity**, not a byte-for-byte executable hash and not a substitute for exact Git SHA/build qualification.
-- The canonical and generated composition entrypoints must call `identity.SetComponents(...)` with the complete normalized import list they link. Package initialization may still register commands/providers, but component identity must not depend on optional packages remembering to self-register. `identity.RegisterComponent` is compatibility-only and entrypoint `SetComponents` is authoritative.
+- The composition digest is a logical composition identity, not a byte-for-byte executable hash and not a substitute for exact Git SHA/build qualification.
+- The canonical and generated composition entrypoints must call `identity.SetComponents(...)` with the complete normalized import list they link.
 - `smoke inspect` reports the running composition digest, executable path, Go version, component imports, and any inherited environment/workspace identity.
 - `smoke env inspect <name>` reports canonical environment paths plus the immutable runtime snapshot digest/path Smoke would use.
 - `SMOKE_ENV_WORKSPACE` identifies the exact workspace snapshot path; its content-addressed directory name is the workspace digest.
@@ -89,11 +89,13 @@ Rules:
 - Workspace `use` targets are local Go module directories containing `go.mod`.
 - The environment tools module is always part of the workspace so declared tools are visible to `go tool` in workspace mode.
 - Canonical mutation (`create`, `use`, `drop`, tool add/remove) takes an exclusive cross-process environment lock.
+- Multi-tool provider/profile composition uses one manifest transaction. If any tool add fails, restore the pre-call `tools/go.mod` and `tools/go.sum` rather than retaining a partially composed environment.
+- Durable default provider/profile tool sets use exact immutable Git commit selectors. Movable refs such as `@main` or role refs such as `@go` may be discovery/provenance selectors but are not default runtime authority.
 - Long-lived consumers (`shell`, `exec`, `build`, `run`, and tool listing) take only a short shared lock to snapshot one coherent environment state, release the lock, and then run against that immutable snapshot.
-- A runtime snapshot includes `go.work` plus `tools/go.mod` and `tools/go.sum` when present. Snapshotting only `go.work` is insufficient because later tool mutation would otherwise change the running tool graph.
+- A runtime snapshot includes `go.work` plus `tools/go.mod` and `tools/go.sum` when present.
 - Snapshot `go.work` preserves Go/toolchain/godebug/use/replace semantics. Local project paths are normalized; the tools `use` entry points at the copied snapshot-local tools module.
 - Runtime snapshots are content-addressed cache state. Equal canonical state reuses one digest/path; changed canonical state creates a new immutable digest/path and never mutates older snapshots.
-- Do not delete a snapshot merely because the launcher exits. Unattended Logmash descendants may still inherit its `GOWORK`. Future GC must prove a snapshot is unreferenced or use a conservative retention policy.
+- Do not delete a snapshot merely because the launcher exits. Unattended descendants may still inherit its `GOWORK`.
 - Environment activation is scoped to child processes with `GOWORK`, `SMOKE_ENV`, and `SMOKE_ENV_WORKSPACE`; never mutate process-global `GOWORK` or cwd to implement `env run`.
 - `smoke env shell` creates a child shell; `smoke env exec` creates an arbitrary child process; `smoke env build` remains a thin system `go build`; `smoke env run` re-execs Smoke itself and then uses normal compiled-in command dispatch.
 
@@ -129,9 +131,20 @@ smoke env
 
 An environment cannot make an optional command available unless that command is already linked into the current binary.
 
-Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the compiled Logmash handler; it must not resolve or install a separate `logmash` executable. Unattended Logmash children inherit the immutable runtime snapshot.
+Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute Smoke itself and dispatch the compiled Logmash handler; it must not resolve or install a separate `logmash` executable.
 
 A running Smoke process and the installed Smoke filesystem entry are distinct after atomic recomposition. A re-exec racing with a completed replacement may start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is introduced.
+
+## ghxd invariants
+
+`ghxd` is GitHub-specific. Do not introduce a forge-neutral abstraction merely because later providers may include Forgejo or Gitea.
+
+- The stock ghxd capability set is composed through the same environment tool mechanism as ordinary Go tools.
+- All default ghxd tools are pinned to exact Git commits.
+- Applying the ghxd default set is all-or-rollback at the environment manifest boundary.
+- `github-worktree` seeds the requested exact 40-character commit; an optional role ref proves provenance/reachability only and never replaces SHA authority.
+- The shared bare Git object database is mutable shared state. Serialize its init/fetch/prune/worktree-registration mutations per repository across processes. Release that lock after the worktree has been registered and verified; do not hold it for the lifetime of the resulting worktree.
+- GitHub credentials are runtime inputs. Never persist tokens in Smoke state, URLs, evidence, or Git configuration.
 
 ## Logmash source grammar
 
@@ -204,10 +217,31 @@ Therefore:
 
 HTTP response bodies must be drained and closed for connection reuse.
 
-## DNS discovery invariants
+## xdroute and DNS discovery invariants
 
-DNS is provider discovery, not runtime state.
+`xdroute` is the provider-neutral route interface. Exact TXT records are a projection of concrete route configuration, not the interface itself.
 
+```text
+concrete []xdroute.Route configuration
+        │
+        ▼
+provider projection (for example cfxd/dns-txt)
+        │
+        ▼
+Terraform/provider-specific records
+        │
+        ▼
+DNS
+```
+
+Rules:
+
+- The route configuration schema is explicit: version, service, role, provider, region, edge, and host. Configuration decoding is strict; unknown/provider-specific fields and trailing JSON are errors rather than silently ignored extensions.
+- `xdroute` owns route meaning, DNS identity grammar, validation, and TXT serialization.
+- cfxd owns Cloudflare-specific TXT projection/reconciliation. Smoke may compose/invoke cfxd but does not become the owner of Cloudflare reconciliation semantics.
+- Concrete route instances belong to session/deployment configuration. Do not hard-code deployment-specific routes into Smoke, xdroute, or generic cfxd Terraform source.
+- Multiple route records at one owner are unordered alternatives. Selection must use explicit constraints rather than DNS ordering.
+- Provider projections need stable Terraform resource identity derived from route content/identity rather than list position, so reordering configuration does not churn state addresses.
 - credentials never live in DNS;
 - channels/patterns never live in DNS;
 - Axiom dataset IDs never live in DNS/Terraform state;
@@ -216,6 +250,35 @@ DNS is provider discovery, not runtime state.
 - resolver code must select a valid typed Smoke provider record rather than assume the first TXT record belongs to that provider.
 
 Service identity should come from typed metadata rather than arbitrary hostname shape when typed metadata exists.
+
+## Infrastructure profile and Terraform boundary
+
+Smoke is the session/composition layer, not a Terraform implementation or state owner.
+
+```text
+Smoke session/environment
+    │ selects exact profile/tool commits
+    ├── Agni profile source
+    └── cfxd profile source
+             │
+             ▼
+       native Terraform
+             │
+             ▼
+       provider reconciliation/state
+```
+
+Rules:
+
+- Agni owns machine/runtime infrastructure profiles in Agni's domain, such as Probe.
+- cfxd owns Cloudflare-specific infrastructure profiles such as `dns-txt`.
+- `xdroute` owns the provider-neutral route contract; cfxd owns its Cloudflare projection.
+- Profile seeders own only their declared source surface. Reseeding reconciles/removes stale profile-owned source so deleted `.tf`, module, or profile config files cannot survive and affect later Terraform operations.
+- Profile seeders must not delete or claim `.terraform`, Terraform state, generated tfvars, or sibling configuration owned by the session/caller.
+- Mutable input files must be read before a reseed can replace profile-owned source, then written atomically. Re-seeding from the same path must not self-truncate the source input.
+- Independently owned profiles use independent Terraform roots/state lifecycles by default. Do not combine Agni and cfxd state merely because one Astrochicken session composes both.
+- Smoke currently invokes a native Terraform executable supplied by the runner/host. Smoke does not currently prove or pin Terraform executable provenance; exact Terraform binary/toolchain qualification remains an explicit external-runner concern until a dedicated mechanism is implemented.
+- Source reconciliation is fail-closed but is not currently a whole-directory transactional swap. A mid-seed filesystem failure can leave a partially reconciled source tree; callers must treat a failed seed as unusable and reseed before Terraform execution.
 
 ## Provider registry invariants
 
@@ -297,6 +360,15 @@ When build info is available, generated `go.mod` should pin the same `github.com
 
 Do not make Logmash secretly depend on the durable Logma HTTP control plane merely because Redis is hosted by Fatline. Do not weaken durable Logma resources into process-local Smoke state.
 
+## Known deliberate gaps
+
+Keep incomplete behavior explicit rather than allowing documentation to imply it exists:
+
+- Smoke currently depends on a native Terraform executable provided by the runner/host; Terraform executable provenance is not yet pinned by Smoke.
+- Profile source reseeding is source-reconciling and fail-closed but not a whole-directory transactional swap.
+- Agni Probe may seed runtime-intent assets such as Nginx/Squid/lifecycle configuration, but those assets are not deployed until the Agni profile actually consumes them through Butane/Ignition/user-data or another explicit runtime launcher.
+- Agni Gateway remains incomplete and must not be documented or qualified as a finished durable Fatline deployment profile.
+
 ## Change protocol
 
 When modifying Smoke/Logmash:
@@ -308,11 +380,14 @@ When modifying Smoke/Logmash:
 5. Serialize shared on-disk transitions across processes, not merely goroutines.
 6. Prefer immutable runtime snapshots over long-lived canonical-state locks.
 7. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
-8. Keep stdout default and attached unless explicitly removed.
-9. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
-10. Keep DNS discovery free of credentials and runtime dataset/channel state.
-11. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, or rebuild invariants touched by the change.
-12. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
-13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+8. Use exact immutable commits for durable default external tool/profile authority.
+9. Make multi-tool composition all-or-rollback at its manifest boundary.
+10. Keep stdout default and attached unless explicitly removed.
+11. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+12. Keep DNS discovery free of credentials and runtime dataset/channel state.
+13. Keep provider-neutral configuration separate from provider-specific projection and Terraform state.
+14. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, or rebuild invariants touched by the change.
+15. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
+16. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, or shared cross-provider Terraform state, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, or session start/list/stop primitives.
