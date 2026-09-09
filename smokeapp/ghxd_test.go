@@ -35,7 +35,7 @@ func TestParseGHXDEnvironmentRequiresName(t *testing.T) {
 }
 
 func TestParseGHXDSyncDefaults(t *testing.T) {
-	repo, secret, recovery, err := parseGHXDSync([]string{"--repo", "xd-dash/huram-abi-master"})
+	repo, secret, err := parseGHXDSync([]string{"--repo", "xd-dash/huram-abi-master"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,31 +45,26 @@ func TestParseGHXDSyncDefaults(t *testing.T) {
 	if secret != "HURAM_GITHUB_DEVICE_TOKEN" {
 		t.Fatalf("secret = %q", secret)
 	}
-	if recovery != "HURAM_GITHUB_DEVICE_TOKEN_RECOVERY" {
-		t.Fatalf("recovery = %q", recovery)
-	}
 }
 
-func TestParseGHXDSyncExplicitRecovery(t *testing.T) {
-	repo, secret, recovery, err := parseGHXDSync([]string{
-		"--recovery-secret", "GH_RECOVERY",
+func TestParseGHXDSyncExplicitSecret(t *testing.T) {
+	repo, secret, err := parseGHXDSync([]string{
 		"--repo", "xd-dash/huram-abi-master",
 		"--secret", "GH_PRIMARY",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repo != "xd-dash/huram-abi-master" || secret != "GH_PRIMARY" || recovery != "GH_RECOVERY" {
-		t.Fatalf("got repo=%q secret=%q recovery=%q", repo, secret, recovery)
+	if repo != "xd-dash/huram-abi-master" || secret != "GH_PRIMARY" {
+		t.Fatalf("got repo=%q secret=%q", repo, secret)
 	}
 }
 
-func TestParseGHXDSyncRejectsSameSecret(t *testing.T) {
-	if _, _, _, err := parseGHXDSync([]string{
+func TestParseGHXDSyncRejectsRecoverySecretFlag(t *testing.T) {
+	if _, _, err := parseGHXDSync([]string{
 		"--repo", "xd-dash/huram-abi-master",
-		"--secret", "SAME",
-		"--recovery-secret", "SAME",
+		"--recovery-secret", "OLD_RECOVERY",
 	}); err == nil {
-		t.Fatal("expected identical primary/recovery secret error")
+		t.Fatal("expected obsolete recovery-secret flag to be rejected")
 	}
 }
