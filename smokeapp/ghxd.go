@@ -120,14 +120,14 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 		}
 		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "export", store)
 	case "sync":
-		repo, secret, recovery, err := parseGHXDSync(rest[1:])
+		repo, secret, err := parseGHXDSync(rest[1:])
 		if err != nil {
 			return err
 		}
 		if err := runGHXDTool(ctx, name, ghxdDeviceAuthTool, "ensure", store); err != nil {
 			return err
 		}
-		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "sync-secret", store, repo, secret, recovery)
+		return runGHXDTool(ctx, name, ghxdDeviceAuthTool, "sync-secret", store, repo, secret)
 	case "device":
 		if len(rest) != 2 {
 			return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] device <client-id>")
@@ -143,38 +143,35 @@ func runGHXDAuth(ctx context.Context, args []string) error {
 	}
 }
 
-func parseGHXDSync(args []string) (string, string, string, error) {
+func parseGHXDSync(args []string) (string, string, error) {
 	repo := ""
 	secret := ghxd.DefaultCredentialSecret
-	recovery := ghxd.DefaultCredentialRecoverySecret
 	for len(args) > 0 {
 		if len(args) < 2 {
-			return "", "", "", ghxdSyncUsage()
+			return "", "", ghxdSyncUsage()
 		}
 		value := args[1]
 		if value == "" {
-			return "", "", "", ghxdSyncUsage()
+			return "", "", ghxdSyncUsage()
 		}
 		switch args[0] {
 		case "--repo":
 			repo = value
 		case "--secret":
 			secret = value
-		case "--recovery-secret":
-			recovery = value
 		default:
-			return "", "", "", ghxdSyncUsage()
+			return "", "", ghxdSyncUsage()
 		}
 		args = args[2:]
 	}
-	if repo == "" || secret == "" || recovery == "" || secret == recovery {
-		return "", "", "", ghxdSyncUsage()
+	if repo == "" || secret == "" {
+		return "", "", ghxdSyncUsage()
 	}
-	return repo, secret, recovery, nil
+	return repo, secret, nil
 }
 
 func ghxdSyncUsage() error {
-	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>] [--recovery-secret <name>]")
+	return fmt.Errorf("usage: smoke ghxd auth [--env <environment>] sync --repo <owner/repo> [--secret <name>]")
 }
 
 func runGHXDTool(ctx context.Context, name string, args ...string) error {
