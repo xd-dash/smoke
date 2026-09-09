@@ -3,7 +3,6 @@ package smokeapp
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +15,8 @@ import (
 
 const (
 	astrochickenXDRunEnvironment = "astrochicken-xd-run"
-	agniProbeToolPath            = "github.com/dash-xd/agni/cmd/probe"
-	cfxdDNSTXTToolPath           = "github.com/xd-dash/smoke/cmd/cfxd-dns-txt"
+	agniProbeToolPath             = "github.com/dash-xd/agni/cmd/probe"
+	cfxdDNSTXTToolPath            = "github.com/xd-dash/smoke/cmd/cfxd-dns-txt"
 )
 
 var exactGitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
@@ -93,6 +92,18 @@ func bootstrapAstrochickenXDRun(ctx context.Context, agniSHA, cfxdSHA string) (e
 }
 
 func seedAstrochickenXDRun(ctx context.Context, root, probeVars, routes string) error {
+	// Read mutable configuration before touching either profile root. This makes
+	// repeated seeding safe even when the caller points at the already-composed
+	// config files beneath root/config.
+	probeData, err := os.ReadFile(probeVars)
+	if err != nil {
+		return fmt.Errorf("read probe.tfvars: %w", err)
+	}
+	routeData, err := os.ReadFile(routes)
+	if err != nil {
+		return fmt.Errorf("read xd-run.routes: %w", err)
+	}
+
 	env, err := environment.Require(astrochickenXDRunEnvironment)
 	if err != nil {
 		return fmt.Errorf("astrochicken-xd-run is not bootstrapped: %w", err)
@@ -130,30 +141,39 @@ func seedAstrochickenXDRun(ctx context.Context, root, probeVars, routes string) 
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return err
 	}
-	if err := copyCompositionConfig(probeVars, filepath.Join(configDir, "probe.tfvars")); err != nil {
-		return fmt.Errorf("copy probe.tfvars: %w", err)
+	if err := writeCompositionConfig(filepath.Join(configDir, "probe.tfvars"), probeData); err != nil {
+		return fmt.Errorf("write probe.tfvars: %w", err)
 	}
-	if err := copyCompositionConfig(routes, filepath.Join(configDir, "xd-run.routes")); err != nil {
-		return fmt.Errorf("copy xd-run.routes: %w", err)
+	if err := writeCompositionConfig(filepath.Join(configDir, "xd-run.routes"), routeData); err != nil {
+		return fmt.Errorf("write xd-run.routes: %w", err)
 	}
 	return nil
 }
 
-func copyCompositionConfig(src, dst string) error {
-	in, err := os.Open(src)
+func writeCompositionConfig(dst string, data []byte) error {
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dst)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return err
 	}
-	return out.Close()
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, dst)
 }
 
 func parseProfileSHAs(args []string) (string, string, error) {
