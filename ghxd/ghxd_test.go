@@ -1,6 +1,7 @@
 package ghxd
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ func TestDefaults(t *testing.T) {
 	}
 	want := []string{
 		"github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed",
-		"github.com/dash-xd/github-device-auth/cmd/github-device-auth@113339509308abf42efce2e0305f67c65f6910be",
+		"github.com/dash-xd/github-device-auth/cmd/github-device-auth@32cc679110f6f4cb8d02c8913296b1c1aeb79627",
 		"github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c",
 	}
 	if len(ToolSpecs) != len(want) {
@@ -30,5 +31,18 @@ func TestDefaults(t *testing.T) {
 		if strings.HasSuffix(ToolSpecs[i], "@main") || strings.HasSuffix(ToolSpecs[i], "@go") {
 			t.Fatalf("ToolSpecs[%d] uses mutable role/ref authority: %q", i, ToolSpecs[i])
 		}
+	}
+}
+
+func TestCredentialPathUsesSmokeDataHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SMOKE_DATA_HOME", root)
+	got, err := CredentialPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "ghxd", "credentials", "github-device.json")
+	if got != want {
+		t.Fatalf("CredentialPath() = %q, want %q", got, want)
 	}
 }
