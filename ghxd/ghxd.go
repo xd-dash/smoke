@@ -22,10 +22,9 @@ import (
 
 const DefaultEnvironment = "ghxd"
 const DefaultCredentialSecret = "HURAM_GITHUB_DEVICE_TOKEN"
-const DefaultCredentialRecoverySecret = "HURAM_GITHUB_DEVICE_TOKEN_RECOVERY"
 
 const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
-const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@5b5ffda3b5bc5a352d8613b03c4f06c7df06f4ee"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@49829785420ac3d51e8684784442ed563f6a8e3d"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
 var ToolSpecs = []string{
