@@ -78,13 +78,12 @@ func bootstrapAstrochickenXDRun(ctx context.Context, agniSHA, cfxdSHA string) (e
 			return environment.Environment{}, err
 		}
 	}
-	for _, spec := range []string{
+	specs := []string{
 		agniProbeToolPath + "@" + strings.ToLower(agniSHA),
 		cfxdDNSTXTToolPath + "@" + strings.ToLower(cfxdSHA),
-	} {
-		if err := environment.AddTool(ctx, env.Name, spec); err != nil {
-			return environment.Environment{}, fmt.Errorf("compose profile tool %s: %w", spec, err)
-		}
+	}
+	if err := environment.AddTools(ctx, env.Name, specs); err != nil {
+		return environment.Environment{}, fmt.Errorf("compose astrochicken-xd-run profiles: %w", err)
 	}
 	return env, nil
 }
@@ -161,11 +160,11 @@ func writeCompositionConfig(dst string, data []byte) error {
 	defer os.Remove(tmpName)
 
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
