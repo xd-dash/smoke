@@ -1,6 +1,10 @@
 package smokeapp
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseProfileSHAsRequiresExactSHAs(t *testing.T) {
 	agni := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -40,5 +44,38 @@ func TestExactGitSHA(t *testing.T) {
 		if exactGitSHA.MatchString(invalid) {
 			t.Fatalf("invalid SHA accepted: %q", invalid)
 		}
+	}
+}
+
+func TestWriteCompositionConfigCanReplaceSamePathData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "xd-run.routes")
+	want := []byte("{\"zone\":\"xd.run\",\"routes\":[]}\n")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// seedAstrochickenXDRun reads inputs before writing outputs. This helper
+	// verifies the write side can safely replace a path whose bytes were already
+	// read from that same path without truncation or partial content.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCompositionConfig(path, data); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("config = %q, want %q", got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
+		t.Fatalf("config mode = %o, want 600", gotMode)
 	}
 }
