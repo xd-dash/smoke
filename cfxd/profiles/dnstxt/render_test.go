@@ -2,7 +2,6 @@ package dnstxt
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -48,11 +47,61 @@ func TestRenderTerraformVars(t *testing.T) {
 }
 
 func TestRenderTerraformVarsRejectsProviderSpecificRouteConfig(t *testing.T) {
-	out, err := RenderTerraformVars([]byte(`{"zone":"xd.run","zone_id":"cloudflare-zone-id","routes":[]}`))
+	if _, err := RenderTerraformVars([]byte(`{"zone":"xd.run","zone_id":"cloudflare-zone-id","routes":[]}`)); err == nil {
+		t.Fatal("provider-specific zone_id was accepted")
+	}
+}
+
+func TestRenderTerraformVarsRejectsDuplicateRoutes(t *testing.T) {
+	input := []byte(`{
+  "zone":"xd.run",
+  "routes":[
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Host":"edge.example.com"},
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Host":"edge.example.com"}
+  ]
+}`)
+	if _, err := RenderTerraformVars(input); err == nil {
+		t.Fatal("duplicate route was accepted")
+	}
+}
+
+func TestRenderTerraformVarsKeysAreStableAcrossReordering(t *testing.T) {
+	first := []byte(`{
+  "zone":"xd.run",
+  "routes":[
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Region":"us-east","Host":"east.example.com"},
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Region":"eu-central","Host":"eu.example.com"}
+  ]
+}`)
+	second := []byte(`{
+  "zone":"xd.run",
+  "routes":[
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Region":"eu-central","Host":"eu.example.com"},
+    {"Service":"logmash","Role":"callback","Provider":"axiom","Region":"us-east","Host":"east.example.com"}
+  ]
+}`)
+
+	var a, b terraformVars
+	out, err := RenderTerraformVars(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "zone_id") {
-		t.Fatalf("render leaked provider-specific zone_id: %s", out)
+	if err := json.Unmarshal(out, &a); err != nil {
+		t.Fatal(err)
+	}
+	out, err = RenderTerraformVars(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &b); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Records) != len(b.Records) {
+		t.Fatalf("record counts differ: %d vs %d", len(a.Records), len(b.Records))
+	}
+	for key, record := range a.Records {
+		if got, ok := b.Records[key]; !ok || got != record {
+			t.Fatalf("record key %s changed across reorder", key)
+		}
 	}
 }
