@@ -27,7 +27,7 @@ The normal GitHub bootstrap is:
 smoke ghxd bootstrap
 ```
 
-It idempotently ensures the default environment named `ghxd` exists and composes the GitHub tools using the same native Go tool mechanism as `smoke env tool add`:
+It idempotently ensures the default environment named `ghxd` exists and composes the GitHub tools using the same native Go tool mechanism as Smoke environments:
 
 ```text
 smoke ghxd bootstrap
@@ -35,15 +35,19 @@ smoke ghxd bootstrap
         v
 Smoke environment: ghxd
         |
-        +-- github-cdn
-        +-- github-device-auth
-        +-- github-worktree
+        +-- github-cdn@<exact-commit>
+        +-- github-device-auth@<exact-commit>
+        +-- github-worktree@<exact-commit>
         |
         v
 immutable Smoke workspace snapshots
 ```
 
-`github-worktree` is an ordinary installable Go tool backed by the reusable `ghxd/worktree` package. Its default tool spec is pinned to an exact qualified Smoke commit rather than a movable `main` selector, so an older Smoke binary cannot silently bootstrap a newer seeding implementation.
+Every default ghxd tool spec is pinned to an exact Git commit. Role branches such as `github-cdn@go` and movable refs such as `@main` may be useful discovery/provenance selectors, but they are not runtime authority for the durable default environment.
+
+The default tool-set mutation is transactional at the environment-manifest boundary. Smoke snapshots `tools/go.mod` and `tools/go.sum` under the environment's exclusive lock, composes the complete set, and restores the exact previous manifests if any tool add fails. Module-cache downloads are cache state and are not rolled back.
+
+This means a failed bootstrap cannot leave one new ghxd capability revision installed while another remained old/missing.
 
 Inspect the intended default tool set without mutating anything:
 
@@ -148,7 +152,7 @@ No forge-neutral provider framework is required in advance.
 
 Go owns module queries, pseudo-versions, checksums, `go.mod`, `go.sum`, `go.work`, tool directives, and ordinary reusable Go implementations.
 
-Smoke owns named environments, immutable snapshots, and the GitHub operator façades that execute those tools.
+Smoke owns named environments, immutable snapshots, manifest-transactional multi-tool composition, and the GitHub operator façades that execute those tools.
 
 Huram owns credentials, exact candidate selection, organization-specific evidence, qualification, and promotion.
 

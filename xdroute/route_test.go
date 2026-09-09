@@ -1,6 +1,7 @@
 package xdroute
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -16,6 +17,33 @@ func TestIdentityDNSName(t *testing.T) {
 	}
 	if name != "_axiom._callback.logmash.xd.run" {
 		t.Fatalf("DNSName = %q", name)
+	}
+}
+
+func TestRouteJSONUsesProviderNeutralFieldNames(t *testing.T) {
+	route := Route{
+		Service:  "logmash",
+		Role:     "callback",
+		Provider: "axiom",
+		Region:   "us-east",
+		Edge:     "us-east-1.aws",
+		Host:     "us-east-1.aws.edge.axiom.co",
+	}
+	body, err := json.Marshal(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"service":"logmash","role":"callback","provider":"axiom","region":"us-east","edge":"us-east-1.aws","host":"us-east-1.aws.edge.axiom.co"}`
+	if string(body) != want {
+		t.Fatalf("JSON = %s, want %s", body, want)
+	}
+
+	var decoded Route
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, route) {
+		t.Fatalf("decoded = %#v, want %#v", decoded, route)
 	}
 }
 
