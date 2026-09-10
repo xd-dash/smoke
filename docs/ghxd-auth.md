@@ -1,16 +1,8 @@
-# ghxd local GitHub authentication
+# ghxd GitHub authentication
 
-`ghxd` keeps GitHub OAuth/device-flow credential lifecycle outside Smoke core. The exact-pinned `github-device-auth` Go tool owns device login, refresh, strict bundle validation, atomic local persistence and repository-secret synchronization; Smoke provides the GitHub-specific operator surface.
+`ghxd` owns GitHub-provider credential semantics outside Smoke core. The exact-pinned `github-device-auth` Go tool is deliberately stateless: it only requests a device code, polls GitHub for a token response, and exchanges a refresh token for a replacement token response. It does not own files, repository secrets, GCS, or deployment state.
 
-The local checkpoint defaults to:
-
-```text
-~/.local/share/smoke/ghxd/credentials/github-device.json
-```
-
-`SMOKE_DATA_HOME` overrides the Smoke data root. Otherwise `XDG_DATA_HOME` is honored before the conventional `~/.local/share` fallback.
-
-The checkpoint is one atomic JSON document:
+`ghxd` owns the transport/checkpoint bundle shape used by callers:
 
 ```json
 {
@@ -23,45 +15,44 @@ The checkpoint is one atomic JSON document:
 }
 ```
 
-Access and refresh tokens are never persisted separately because a refresh rotates the pair together.
+The bundle is an in-memory/input-output value, not a Smoke credential database. Smoke/ghxd does not persist it to disk.
 
-Normal use:
+Normal device login is stateless and emits one complete bundle:
 
 ```bash
 smoke ghxd bootstrap
 smoke ghxd auth login <github-device-flow-client-id>
-smoke ghxd auth status
-smoke ghxd auth ensure
-export GH_TOKEN="$(smoke ghxd auth token)"
 ```
 
-`auth ensure` leaves a still-fresh credential unchanged. Inside the safety margin it refreshes locally through GitHub's OAuth token endpoint and atomically replaces the `0600` local checkpoint before any repository-secret writeback is attempted.
-
-To mirror the complete current checkpoint into the repository Actions secret:
+For an existing checkpoint supplied by the caller:
 
 ```bash
-smoke ghxd auth sync \
-  --repo xd-dash/huram-abi-master \
-  --secret HURAM_GITHUB_DEVICE_TOKEN
+export GITHUB_DEVICE_TOKEN_BUNDLE='...'
+
+current="$(smoke ghxd auth ensure \
+  --bundle-env GITHUB_DEVICE_TOKEN_BUNDLE)"
+
+export GH_TOKEN="$(jq -r '.access_token' <<<"$current")"
 ```
 
-There is deliberately one remote credential checkpoint. `auth sync` writes the complete JSON bundle to that one repository secret with bounded retries.
+`auth ensure` strictly decodes the bundle. If the access token remains fresh outside the safety margin, it emits the same bundle. If stale, it invokes the stateless `github-device-auth refresh <client-id> <refresh-token>` primitive, requires a complete replacement access+refresh response with both expiry durations, constructs a new ghxd bundle, and emits it. `auth refresh` forces that transformation regardless of access-token freshness.
 
-The local file is the transient durability boundary for the running process. If OAuth refresh succeeds but repository-secret synchronization fails, the freshly rotated pair remains in the local `0600` checkpoint. The operation fails closed and may retry synchronization from that same local bundle while the runner remains alive. It must not overwrite the local bundle with the stale remote value and must not create a second repository-secret recovery rail merely to model this narrow failure window.
+The caller owns persistence. In Huram Actions the durable checkpoint is `secrets.HURAM_GITHUB_DEVICE_TOKEN`; Huram injects that JSON, calls ghxd, projects the returned access token as `GH_TOKEN`, and replaces the same repository secret if the returned pair rotated. Repository-secret write policy, retries, concurrency, and permissions therefore belong to Huram rather than github-device-auth or ghxd.
 
-If the runner-local copy is lost before remote synchronization succeeds, normal recovery is a new device login or an explicit external import of a complete credential bundle. The source of an imported bundle is outside ghxd's architecture.
+The old HTTP router is a separate adapter around the same device-flow primitives. Its historical GCS cache was a convenience for a remotely hosted stateful HTTP deployment. It is not part of ghxd, and ghxd has no router, GCS, WIF, GCP, or local credential-file dependency.
 
-Repository secrets are Actions checkpoints, not readable object storage: arbitrary clients can update/list secret metadata but cannot retrieve secret plaintext. An Actions workflow receives the bundle only when GitHub injects the corresponding `${{ secrets.* }}` value.
+Ownership is therefore:
 
-Inside Actions the primitive flow is:
+```text
+github-device-auth
+    GitHub device/poll/refresh protocol primitives
 
-```bash
-export GITHUB_DEVICE_TOKEN_BUNDLE='${{ secrets.HURAM_GITHUB_DEVICE_TOKEN }}'
-smoke ghxd auth import --repo-secret-env GITHUB_DEVICE_TOKEN_BUNDLE
-smoke ghxd auth ensure
-export GH_TOKEN="$(smoke ghxd auth token)"
+ghxd
+    bundle schema + freshness/refresh transformation
+
+Huram / other caller
+    durable credential persistence + GH_TOKEN projection
+
+router
+    optional HTTP adapter
 ```
-
-If `ensure` refreshes the pair, synchronize that complete new bundle back to `HURAM_GITHUB_DEVICE_TOKEN` before the run ends.
-
-`ghxd` has no router, GCS, WIF or GCP dependency for normal authentication. `github-device-auth` may have other optional deployment adapters elsewhere, but those are not part of Smoke's credential model.
