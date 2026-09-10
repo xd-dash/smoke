@@ -144,11 +144,11 @@ A running Smoke process and the installed Smoke filesystem entry are distinct af
 - Applying the ghxd default set is all-or-rollback at the environment manifest boundary.
 - `github-worktree` seeds the requested exact 40-character commit; an optional role ref proves provenance/reachability only and never replaces SHA authority.
 - The shared bare Git object database is mutable shared state. Serialize its init/fetch/prune/worktree-registration mutations per repository across processes. Release that lock after the worktree has been registered and verified; do not hold it for the lifetime of the resulting worktree.
-- GitHub device-flow auth is a ghxd provider capability, not Smoke-core state. `dash-xd/github-device-auth` owns only the stateless GitHub device-flow protocol primitives: device initiation, token polling, and access/refresh-token exchange. It must not own local credential files, ghxd bundle persistence, repository-secret synchronization, GCS, WIF, or Huram-specific policy.
-- ghxd owns the v1 credential-bundle schema and freshness/refresh transformation. A bundle is caller-supplied input and emitted output, not a Smoke credential database.
+- GitHub device-flow auth is a ghxd provider capability, not Smoke-core state. `dash-xd/github-device-auth` owns only the stateless GitHub device-flow protocol primitives: device initiation, token polling, and refresh exchange. It must not own local credential files, bundle persistence, repository-secret synchronization, GCS, WIF, or Huram-specific policy.
+- ghxd owns the v1 credential-bundle schema, validation, freshness decision, and bundle-to-bundle refresh transformation. A bundle is caller-supplied input and emitted output, not a Smoke credential database.
 - ghxd must not persist GitHub OAuth credentials to a local credential file. There is no `CredentialPath`, import-to-file/export-from-file lifecycle, or repository-secret synchronization command in ghxd.
 - Access and refresh tokens are one credential transaction. A stale bundle is refreshed through the exact-pinned stateless `github-device-auth refresh <client-id> <refresh-token>` primitive; ghxd requires a complete replacement pair and both expiry durations before emitting a replacement bundle.
-- `auth ensure` is non-mutating while the supplied access token remains fresh outside its safety margin: it emits the same bundle. When stale, it emits the replacement bundle. `auth refresh` forces the same stateless transformation.
+- `auth ensure` emits the supplied bundle unchanged while the access token remains fresh outside its safety margin. When stale, it emits the replacement bundle. `auth refresh` forces the same stateless transformation.
 - `auth login` composes the stateless device and poll primitives and emits a complete v1 bundle. The caller decides whether and where that bundle is persisted.
 - Durable credential persistence belongs to the caller. GitHub Actions repository-secret names, write retries, concurrency, and `GH_TOKEN` projection are Huram concerns, not ghxd concerns.
 - Local operators and GitHub Actions should exercise the same implementation path: caller-supplied bundle -> Smoke/ghxd -> exact `github-device-auth` device/poll/refresh primitive -> emitted current bundle.
@@ -312,3 +312,92 @@ Keep provider contracts small. If providers diverge in capability, prefer narrow
 - `Target.Source` is credential-free provenance.
 
 Observation credentials should be least-privilege and must not imply publish/key mutation/admin authority.
+
+## Session registry
+
+The session registry is lightweight local supervision metadata for unattended Logmash processes. It is not durable Logma state.
+
+Current records include random session ID, PID, source/callback summaries, auth provider, start time, composition digest, environment name, workspace digest/path, and lease path. Callback metadata remains sanitized before persistence.
+
+Each live unattended process owns an exclusive OS-backed lease file. Lease ownership, not PID existence alone, is the liveness authority. `list` and `stop` require a held lease and a live PID; stale records are cleaned when ownership is gone.
+
+`smoke logmash list` should remain compact. `smoke logmash list --verbose` exposes correlation/debug metadata including composition/workspace identities and lease path.
+
+Session identity metadata is observational. Do not turn the lease/JSON registry into durable Logma graph state, orchestration state, or a resident supervision daemon.
+
+## Self-composition/rebuild invariants
+
+Composition state is a sorted, deduplicated list of Go import paths. The generated entrypoint must embed that same normalized list with `identity.SetComponents(...)` before calling `smokeapp.Main`; identity generation and import generation are one composition operation.
+
+All composition mutation is one cross-process transaction. `add`/`remove` perform manifest read, transformation, dependency resolution, candidate build, manifest commit, and executable replacement under one exclusive composition lock. `rebuild` uses the same lock.
+
+Recomposition is isolated from Smoke environments: every Go command used for composition runs with `GOWORK=off`.
+
+Apply order:
+
+```text
+lock composition
+        ↓
+load + normalize desired imports
+        ↓
+snapshot generated main.go/go.mod/go.sum
+        ↓
+generate/update composition module
+        ↓
+go mod tidy
+        ↓
+go build staged candidate
+        ↓
+build failed? restore generated source/module state
+        ↓
+save desired manifest atomically
+        ↓
+atomic rename candidate over installed Smoke
+        ↓
+rename failed? restore previous manifest
+```
+
+The installed binary is replaced only with a successfully built candidate. Unix/macOS filesystem-entry rename is atomic. Windows in-place replacement remains unsupported.
+
+Generated composition files/manifests use unique temporary files. Do not use fixed temp names that collide across processes.
+
+When build info is available, generated `go.mod` should pin the same `github.com/xd-dash/smoke` module version that produced the running binary; `SMOKE_MODULE_VERSION` is the explicit override. Existing selected versions for optional dependencies should not be discarded on every rebuild.
+
+## Durable Logma boundary
+
+`xd-dash/logma` remains the durable Fatline service/resource graph. Logmash remains intentionally ephemeral: receive/route, source subscriptions, stdout/Axiom/webhooks, and attached or unattended local lifetime.
+
+Do not make Logmash secretly depend on the durable Logma HTTP control plane merely because Redis is hosted by Fatline. Do not weaken durable Logma resources into process-local Smoke state.
+
+## Known deliberate gaps
+
+Keep incomplete behavior explicit rather than allowing documentation to imply it exists:
+
+- Smoke currently depends on a native Terraform executable provided by the runner/host; Terraform executable provenance is not yet pinned by Smoke.
+- Profile source reseeding is source-reconciling and fail-closed but not a whole-directory transactional swap.
+- Agni Probe may seed runtime-intent assets such as Nginx/Squid/lifecycle configuration, but those assets are not deployed until the Agni profile actually consumes them through Butane/Ignition/user-data or another explicit runtime launcher.
+- Agni Gateway remains incomplete and must not be documented or qualified as a finished durable Fatline deployment profile.
+
+## Change protocol
+
+When modifying Smoke/Logmash:
+
+1. Preserve the smallest composition primitive that satisfies the requirement.
+2. Prefer import-time composition over runtime discovery.
+3. Prefer context cancellation and ownership over shared mutable state.
+4. Keep process-global cwd/environment mutation out of reusable execution paths.
+5. Serialize shared on-disk transitions across processes, not merely goroutines.
+6. Prefer immutable runtime snapshots over long-lived canonical-state locks.
+7. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
+8. Use exact immutable commits for durable default external tool/profile authority.
+9. Make multi-tool composition all-or-rollback at its manifest boundary.
+10. Keep stdout default and attached unless explicitly removed.
+11. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+12. Keep DNS discovery free of credentials and runtime dataset/channel state.
+13. Keep provider-neutral configuration separate from provider-specific projection and Terraform state.
+14. Keep ghxd credential handling stateless: transform explicit bundle input to bundle output; persistence belongs to callers.
+15. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, auth bundle, or rebuild invariants touched by the change.
+16. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
+17. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, shared cross-provider Terraform state, local GitHub credential store, or a second GitHub credential backend, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, stateless ghxd bundle transformation, or session start/list/stop primitives.
