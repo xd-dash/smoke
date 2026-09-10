@@ -5,48 +5,29 @@
 // a forge-neutral abstraction inside this package.
 //
 // Each external capability remains an ordinary Go tool. Smoke owns the named
-// environment, immutable snapshot, and execution lifecycle. Mutable GitHub
-// credential checkpoints live under Smoke's local data root, outside the Go
-// workspace snapshot, and are never committed into environment manifests.
+// environment, immutable snapshot, and execution lifecycle. GitHub credential
+// persistence is owned by the caller; ghxd only transforms credential bundles
+// in memory for the duration of one invocation.
 package ghxd
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/xd-dash/smoke/environment"
 )
 
 const DefaultEnvironment = "ghxd"
-const DefaultCredentialSecret = "HURAM_GITHUB_DEVICE_TOKEN"
 
 const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
-const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@49829785420ac3d51e8684784442ed563f6a8e3d"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@85a1a81050198e429611cd58d336090868f0adfb"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
 var ToolSpecs = []string{
 	defaultGitHubCDNToolSpec,
 	defaultDeviceAuthToolSpec,
 	defaultWorktreeToolSpec,
-}
-
-func CredentialPath() (string, error) {
-	root := strings.TrimSpace(os.Getenv("SMOKE_DATA_HOME"))
-	if root == "" {
-		if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
-			root = filepath.Join(xdg, "smoke")
-		} else {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return "", fmt.Errorf("resolve home directory: %w", err)
-			}
-			root = filepath.Join(home, ".local", "share", "smoke")
-		}
-	}
-	return filepath.Join(root, "ghxd", "credentials", "github-device.json"), nil
 }
 
 func Apply(ctx context.Context, name string) error {
