@@ -21,7 +21,7 @@ import (
 const DefaultEnvironment = "ghxd"
 
 const defaultGitHubCDNToolSpec = "github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed"
-const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@85a1a81050198e429611cd58d336090868f0adfb"
+const defaultDeviceAuthToolSpec = "github.com/dash-xd/github-device-auth/cmd/github-device-auth@3e0d30330d2cddd049f866d18306ed21128ad66e"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 
 var ToolSpecs = []string{
