@@ -125,26 +125,26 @@ Bootstrap the normal environment:
 smoke ghxd bootstrap
 ```
 
-Optional capability sets are presets. For example, Probot is implemented in JavaScript but is exposed by its repository as a Go tool wrapper, so Smoke still sees only a Go tool:
+Optional capability sets are presets. `probot-runtime` is implemented in JavaScript internally, but its repository exposes a Go tool wrapper, so Smoke and `ghxd` still see one ordinary Go tool:
 
 ```sh
 smoke ghxd bootstrap --preset probot-runtime
 ```
 
-or add the preset later:
+or add it later:
 
 ```sh
 smoke ghxd preset ghxd probot-runtime
 ```
 
-Then invoke the wrapper through the existing ghxd tool path:
+Invoke it through the existing ghxd tool path:
 
 ```sh
 smoke ghxd tool probot-runtime redis-schema-smoke
 smoke ghxd tool probot-runtime serve
 ```
 
-A plain `ghxd` environment does not require or install `probot-runtime`. Node/npm are requirements of the optional Probot tool when that wrapper is actually invoked; Smoke does not manage npm packages itself.
+A plain `ghxd` environment does not install or require `probot-runtime`. Node/npm are requirements of the optional wrapper only when that tool is invoked; Smoke does not manage npm packages or JavaScript module directories.
 
 ## Logmash source grammar
 
