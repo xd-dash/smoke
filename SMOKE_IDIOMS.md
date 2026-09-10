@@ -144,7 +144,16 @@ A running Smoke process and the installed Smoke filesystem entry are distinct af
 - Applying the ghxd default set is all-or-rollback at the environment manifest boundary.
 - `github-worktree` seeds the requested exact 40-character commit; an optional role ref proves provenance/reachability only and never replaces SHA authority.
 - The shared bare Git object database is mutable shared state. Serialize its init/fetch/prune/worktree-registration mutations per repository across processes. Release that lock after the worktree has been registered and verified; do not hold it for the lifetime of the resulting worktree.
-- GitHub credentials are runtime inputs. Never persist tokens in Smoke state, URLs, evidence, or Git configuration.
+- GitHub device-flow auth is a ghxd provider capability, not Smoke-core state. `dash-xd/github-device-auth` owns only the stateless GitHub device-flow protocol primitives: device initiation, token polling, and refresh exchange. It must not own local credential files, bundle persistence, repository-secret synchronization, GCS, WIF, or Huram-specific policy.
+- ghxd owns the v1 credential-bundle schema, validation, freshness decision, and bundle-to-bundle refresh transformation. A bundle is caller-supplied input and emitted output, not a Smoke credential database.
+- ghxd must not persist GitHub OAuth credentials to a local credential file. There is no `CredentialPath`, import-to-file/export-from-file lifecycle, or repository-secret synchronization command in ghxd.
+- Access and refresh tokens are one credential transaction. A stale bundle is refreshed through the exact-pinned stateless `github-device-auth refresh <client-id> <refresh-token>` primitive; ghxd requires a complete replacement pair and both expiry durations before emitting a replacement bundle.
+- `auth ensure` emits the supplied bundle unchanged while the access token remains fresh outside its safety margin. When stale, it emits the replacement bundle. `auth refresh` forces the same stateless transformation.
+- `auth login` composes the stateless device and poll primitives and emits a complete v1 bundle. The caller decides whether and where that bundle is persisted.
+- Durable credential persistence belongs to the caller. GitHub Actions repository-secret names, write retries, concurrency, and `GH_TOKEN` projection are Huram concerns, not ghxd concerns.
+- Local operators and GitHub Actions should exercise the same implementation path: caller-supplied bundle -> Smoke/ghxd -> exact `github-device-auth` device/poll/refresh primitive -> emitted current bundle.
+- Normal ghxd authentication must not require WIF, GCP function discovery, a router, GCS, or a local credential file.
+- The historical `github-device-auth` HTTP router remains a separate optional adapter around the same underlying protocol implementation. Its historical GCS cache is deployment-specific persistence and is not part of ghxd architecture.
 
 ## Logmash source grammar
 
@@ -386,8 +395,9 @@ When modifying Smoke/Logmash:
 11. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
 12. Keep DNS discovery free of credentials and runtime dataset/channel state.
 13. Keep provider-neutral configuration separate from provider-specific projection and Terraform state.
-14. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, or rebuild invariants touched by the change.
-15. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
-16. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+14. Keep ghxd credential handling stateless: transform explicit bundle input to bundle output; persistence belongs to callers.
+15. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, profile seeding, worktree locking, auth bundle, or rebuild invariants touched by the change.
+16. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; require composition CI as well, then require normal `main` CI after merge.
+17. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, or shared cross-provider Terraform state, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, provider-neutral infrastructure framework, shared cross-provider Terraform state, local GitHub credential store, or a second GitHub credential backend, first verify that the requirement cannot be expressed through the existing Go composition, `go.work`/`go.mod`, immutable snapshots, exact tool pins, typed provider/profile boundaries, runtime identity inspection, attached/unattended lifetime, callback fan-out, stateless ghxd bundle transformation, or session start/list/stop primitives.
