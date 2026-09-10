@@ -115,6 +115,37 @@ List the commands present in the current binary with:
 smoke commands
 ```
 
+## ghxd tool environments
+
+`ghxd` is Smoke's GitHub-specific Go tool environment. Its required tools are installed through ordinary Go `tool` directives.
+
+Bootstrap the normal environment:
+
+```sh
+smoke ghxd bootstrap
+```
+
+Optional capability sets are presets. `probot-runtime` is implemented in JavaScript internally, but its repository exposes a Go tool wrapper, so Smoke and `ghxd` still see one ordinary Go tool:
+
+```sh
+smoke ghxd bootstrap --preset probot-runtime
+```
+
+or add it later:
+
+```sh
+smoke ghxd preset ghxd probot-runtime
+```
+
+Invoke it through the existing ghxd tool path:
+
+```sh
+smoke ghxd tool probot-runtime redis-schema-smoke
+smoke ghxd tool probot-runtime serve
+```
+
+A plain `ghxd` environment does not install or require `probot-runtime`. Node/npm are requirements of the optional wrapper only when that tool is invoked; Smoke does not manage npm packages or JavaScript module directories.
+
 ## Logmash source grammar
 
 A Redis subscription is one atomic geographic source relationship:
