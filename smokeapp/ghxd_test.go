@@ -33,3 +33,29 @@ func TestParseGHXDEnvironmentRequiresName(t *testing.T) {
 		t.Fatal("expected missing environment error")
 	}
 }
+
+func TestParseGHXDBootstrapPreset(t *testing.T) {
+	name, presets, err := parseGHXDBootstrap([]string{"operator", "--preset", "probot-runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "operator" {
+		t.Fatalf("name = %q, want operator", name)
+	}
+	if len(presets) != 1 || presets[0] != "probot-runtime" {
+		t.Fatalf("presets = %q", presets)
+	}
+}
+
+func TestParseGHXDBootstrapDefaultWithPreset(t *testing.T) {
+	name, presets, err := parseGHXDBootstrap([]string{"--preset", "probot-runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "" {
+		t.Fatalf("name = %q, want empty default selector", name)
+	}
+	if len(presets) != 1 || presets[0] != "probot-runtime" {
+		t.Fatalf("presets = %q", presets)
+	}
+}
