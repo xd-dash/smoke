@@ -20,7 +20,7 @@ import (
 const DefaultEnvironment = "ghxd"
 
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
-const probotRuntimeToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime@53a730434a696cd1e1bf72afe85d9bd485969774"
+const probotRuntimeToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime@7a01a3ec135f52940c01358ec5da3c8ff116eaec"
 
 // ToolSpecs is the required ghxd capability set. Optional capabilities belong
 // to Presets so their absence never invalidates a normal ghxd environment.
