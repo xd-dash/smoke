@@ -1,6 +1,9 @@
 package ghxd
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestDefaults(t *testing.T) {
 	if DefaultEnvironment != "ghxd" {
@@ -18,5 +21,20 @@ func TestDefaults(t *testing.T) {
 		if ToolSpecs[i] != want[i] {
 			t.Fatalf("ToolSpecs[%d] = %q, want %q", i, ToolSpecs[i], want[i])
 		}
+	}
+	if _, ok := Presets[ProbotRuntimePreset]; !ok {
+		t.Fatalf("missing optional %q preset", ProbotRuntimePreset)
+	}
+}
+
+func TestProbotRuntimeIsOptional(t *testing.T) {
+	t.Setenv("SMOKE_ENV_DIR", t.TempDir())
+	if _, err := Bootstrap(context.Background(), "test-ghxd"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ProbotRuntime("test-ghxd"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("default ghxd bootstrap unexpectedly installed probot-runtime")
 	}
 }
