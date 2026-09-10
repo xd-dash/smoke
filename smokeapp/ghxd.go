@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 
 	"github.com/xd-dash/smoke/command"
 	"github.com/xd-dash/smoke/environment"
@@ -30,16 +31,21 @@ func runGHXD(args []string) error {
 		for _, spec := range ghxd.ToolSpecs {
 			fmt.Printf("tool\t%s\n", spec)
 		}
+		presets := make([]string, 0, len(ghxd.Presets))
+		for name := range ghxd.Presets {
+			presets = append(presets, name)
+		}
+		sort.Strings(presets)
+		for _, name := range presets {
+			fmt.Printf("preset\t%s\toptional\n", name)
+		}
 		return nil
 	case "bootstrap":
-		if len(args) > 2 {
-			return fmt.Errorf("usage: smoke ghxd bootstrap [environment]")
+		name, presets, err := parseGHXDBootstrap(args[1:])
+		if err != nil {
+			return err
 		}
-		name := ""
-		if len(args) == 2 {
-			name = args[1]
-		}
-		env, err := ghxd.Bootstrap(ctx, name)
+		env, err := ghxd.BootstrapWithPresets(ctx, name, presets)
 		if err != nil {
 			return err
 		}
@@ -50,6 +56,11 @@ func runGHXD(args []string) error {
 			return fmt.Errorf("usage: smoke ghxd apply <environment>")
 		}
 		return ghxd.Apply(ctx, args[1])
+	case "preset":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: smoke ghxd preset <environment> <preset>")
+		}
+		return ghxd.ApplyPreset(ctx, args[1], args[2])
 	case "tool":
 		name, rest, err := parseGHXDEnvironment(args[1:])
 		if err != nil || len(rest) == 0 {
@@ -101,6 +112,10 @@ func runGHXDTool(ctx context.Context, name string, args ...string) error {
 	if err != nil {
 		return fmt.Errorf("ghxd environment %q is not bootstrapped; run `smoke ghxd bootstrap%s`: %w", name, bootstrapSuffix(name), err)
 	}
+	probot, hasProbot, err := ghxd.ProbotRuntime(name)
+	if err != nil {
+		return err
+	}
 	workspace, err := environment.Snapshot(ctx, env)
 	if err != nil {
 		return err
@@ -110,7 +125,33 @@ func runGHXDTool(ctx context.Context, name string, args ...string) error {
 		return fmt.Errorf("ghxd requires a preinstalled Go toolchain: %w", err)
 	}
 	toolArgs := append([]string{"tool"}, args...)
-	return runCommand(workspace.Command(ctx, workspace.ToolsDir, goBin, toolArgs...))
+	cmd := workspace.Command(ctx, workspace.ToolsDir, goBin, toolArgs...)
+	if hasProbot {
+		cmd.Env = append(cmd.Env, "PROBOT_RUNTIME_DIR="+probot.ModuleDir)
+	}
+	return runCommand(cmd)
+}
+
+func parseGHXDBootstrap(args []string) (string, []string, error) {
+	name := ""
+	presets := []string{}
+	for len(args) > 0 {
+		switch args[0] {
+		case "--preset":
+			if len(args) < 2 || args[1] == "" {
+				return "", nil, fmt.Errorf("usage: smoke ghxd bootstrap [environment] [--preset <preset>]...")
+			}
+			presets = append(presets, args[1])
+			args = args[2:]
+		default:
+			if name != "" {
+				return "", nil, fmt.Errorf("usage: smoke ghxd bootstrap [environment] [--preset <preset>]...")
+			}
+			name = args[0]
+			args = args[1:]
+		}
+	}
+	return name, presets, nil
 }
 
 func parseGHXDEnvironment(args []string) (string, []string, error) {
@@ -137,5 +178,5 @@ func ghxdAuthUsage() error {
 }
 
 func ghxdUsage() error {
-	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth|worktree> ...")
+	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|preset|tool|auth|worktree> ...")
 }
