@@ -39,11 +39,8 @@ func TestParseGHXDBootstrapPreset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "operator" {
-		t.Fatalf("name = %q, want operator", name)
-	}
-	if len(presets) != 1 || presets[0] != "probot-runtime" {
-		t.Fatalf("presets = %q", presets)
+	if name != "operator" || len(presets) != 1 || presets[0] != "probot-runtime" {
+		t.Fatalf("name=%q presets=%q", name, presets)
 	}
 }
 
@@ -52,10 +49,7 @@ func TestParseGHXDBootstrapDefaultWithPreset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "" {
-		t.Fatalf("name = %q, want empty default selector", name)
-	}
-	if len(presets) != 1 || presets[0] != "probot-runtime" {
-		t.Fatalf("presets = %q", presets)
+	if name != "" || len(presets) != 1 || presets[0] != "probot-runtime" {
+		t.Fatalf("name=%q presets=%q", name, presets)
 	}
 }
