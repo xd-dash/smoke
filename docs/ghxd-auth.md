@@ -41,6 +41,13 @@ The caller owns persistence. In Huram Actions the durable checkpoint is `secrets
 
 The old HTTP router is a separate adapter around the same device-flow primitives. Its historical GCS cache was a convenience for a remotely hosted stateful HTTP deployment. It is not part of ghxd, and ghxd has no router, GCS, WIF, GCP, or local credential-file dependency.
 
+Current exact qualified chain:
+
+```text
+github-device-auth  3e0d30330d2cddd049f866d18306ed21128ad66e
+Smoke / ghxd        c1eb54945fceb1665d95b190d8e06be23e76a3cb
+```
+
 Ownership is therefore:
 
 ```text
