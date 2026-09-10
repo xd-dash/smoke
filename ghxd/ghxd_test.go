@@ -3,6 +3,8 @@ package ghxd
 import (
 	"context"
 	"testing"
+
+	"github.com/xd-dash/smoke/environment"
 )
 
 func TestDefaults(t *testing.T) {
@@ -29,12 +31,12 @@ func TestDefaults(t *testing.T) {
 
 func TestProbotRuntimeIsOptional(t *testing.T) {
 	t.Setenv("SMOKE_ENV_DIR", t.TempDir())
-	if _, err := Bootstrap(context.Background(), "test-ghxd"); err != nil {
+	if _, err := environment.Create(context.Background(), "test-ghxd"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := ProbotRuntime("test-ghxd"); err != nil {
 		t.Fatal(err)
 	} else if ok {
-		t.Fatal("default ghxd bootstrap unexpectedly installed probot-runtime")
+		t.Fatal("plain environment unexpectedly contains probot-runtime")
 	}
 }
