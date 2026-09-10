@@ -1,11 +1,6 @@
 package ghxd
 
-import (
-	"context"
-	"testing"
-
-	"github.com/xd-dash/smoke/environment"
-)
+import "testing"
 
 func TestDefaults(t *testing.T) {
 	if DefaultEnvironment != "ghxd" {
@@ -24,19 +19,8 @@ func TestDefaults(t *testing.T) {
 			t.Fatalf("ToolSpecs[%d] = %q, want %q", i, ToolSpecs[i], want[i])
 		}
 	}
-	if _, ok := Presets[ProbotRuntimePreset]; !ok {
-		t.Fatalf("missing optional %q preset", ProbotRuntimePreset)
-	}
-}
-
-func TestProbotRuntimeIsOptional(t *testing.T) {
-	t.Setenv("SMOKE_ENV_DIR", t.TempDir())
-	if _, err := environment.Create(context.Background(), "test-ghxd"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := ProbotRuntime("test-ghxd"); err != nil {
-		t.Fatal(err)
-	} else if ok {
-		t.Fatal("plain environment unexpectedly contains probot-runtime")
+	probot := Presets["probot-runtime"]
+	if len(probot) != 1 || probot[0] != probotRuntimeToolSpec {
+		t.Fatalf("probot preset = %q", probot)
 	}
 }
