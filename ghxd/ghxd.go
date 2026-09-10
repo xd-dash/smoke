@@ -22,9 +22,6 @@ const DefaultEnvironment = "ghxd"
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
 const probotRuntimeToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime@53a730434a696cd1e1bf72afe85d9bd485969774"
 
-// ToolSpecs is the required GitHub capability set installed into every ghxd
-// workspace. Optional capabilities belong to explicit presets and must not be
-// added here.
 var ToolSpecs = []string{
 	"github.com/dash-xd/github-cdn@go",
 	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
@@ -35,8 +32,6 @@ var Presets = map[string][]string{
 	"probot-runtime": {probotRuntimeToolSpec},
 }
 
-// Apply composes the required ghxd capability set into an existing Smoke
-// environment using Go's native tool dependency mechanism.
 func Apply(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -45,9 +40,6 @@ func Apply(ctx context.Context, name string) error {
 	return addTools(ctx, name, ToolSpecs)
 }
 
-// ApplyPreset adds an optional ghxd capability set. Presets are ordinary Go
-// tools from Smoke's point of view; a tool may internally orchestrate another
-// runtime without teaching Smoke about that runtime's package manager.
 func ApplyPreset(ctx context.Context, name, preset string) error {
 	name = strings.TrimSpace(name)
 	preset = strings.TrimSpace(preset)
@@ -70,9 +62,6 @@ func addTools(ctx context.Context, name string, specs []string) error {
 	return nil
 }
 
-// Bootstrap ensures a named Smoke environment exists and composes the required
-// ghxd tools into it. Optional presets are applied separately so plain ghxd
-// remains usable without them.
 func Bootstrap(ctx context.Context, name string) (environment.Environment, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
