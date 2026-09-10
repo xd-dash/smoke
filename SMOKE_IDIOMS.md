@@ -155,6 +155,7 @@ Rules:
 - A foreign-runtime capability is represented to Smoke by an ordinary Go `tool` directive.
 - The wrapper and its embedded/owned payload must come from the same immutable module revision so the Go tool identity also pins the implementation payload.
 - Foreign runtime requirements are lazy capability requirements. For example, Node/npm may be required when a Probot wrapper is invoked, but they are not requirements for Smoke, for `ghxd`, or for an environment that did not select that capability.
+- The foreign wrapper may prepare a content-addressed local cache for its own runtime dependencies. That cache is owned by the wrapper, not by the Smoke environment, and must be reconstructible from the exact wrapper/payload identity.
 - Provider/environment packages such as `ghxd` may define named **optional presets** that add one or more Go tools. Presets are convenience composition, not a second dependency system.
 - Required/default tools and optional preset tools remain distinct. Adding a preset must not make a previously valid plain environment invalid when the preset is absent.
 - `ghxd` and other callers should normally invoke these capabilities through the existing `go tool` execution path. Add a provider-specific convenience command only when it expresses stable domain semantics beyond generic tool execution.
