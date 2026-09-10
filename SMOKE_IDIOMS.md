@@ -133,6 +133,50 @@ Logmash follows the same rule. `smoke env run <env> -- logmash ...` must execute
 
 A running Smoke process and the installed Smoke filesystem entry are distinct after atomic recomposition. A re-exec racing with a completed replacement may start the newly installed composition. Do not claim exact parent-image identity unless an immutable executable snapshot or OS-specific self-exec primitive is introduced.
 
+## Foreign-runtime tools stay behind Go tool boundaries
+
+Smoke environments remain Go-native even when an optional capability is implemented in JavaScript, Python, WASM, or another runtime.
+
+The owning repository of that capability must provide the Go tool boundary when it wants to participate in a Smoke environment:
+
+```text
+Smoke environment
+    -> tools/go.mod
+    -> Go tool wrapper
+         -> exact owned foreign-runtime payload
+         -> foreign runtime subprocess
+```
+
+The Go wrapper is a runtime capsule. It owns the implementation-language boundary: exact payload identity, materialization/cache policy, dependency preparation, subprocess launch, signal/lifecycle handling, and implementation-specific diagnostics. Smoke does not learn npm, pip, virtualenv, Node module layout, or another package manager merely because one optional tool needs it.
+
+Rules:
+
+- `environment.AddTool` remains the only generic environment installation primitive for executable tools.
+- A foreign-runtime capability is represented to Smoke by an ordinary Go `tool` directive.
+- The wrapper and its embedded/owned payload must come from the same immutable module revision so the Go tool identity also pins the implementation payload.
+- Foreign runtime requirements are lazy capability requirements. For example, Node/npm may be required when a Probot wrapper is invoked, but they are not requirements for Smoke, for `ghxd`, or for an environment that did not select that capability.
+- Provider/environment packages such as `ghxd` may define named **optional presets** that add one or more Go tools. Presets are convenience composition, not a second dependency system.
+- Required/default tools and optional preset tools remain distinct. Adding a preset must not make a previously valid plain environment invalid when the preset is absent.
+- `ghxd` and other callers should normally invoke these capabilities through the existing `go tool` execution path. Add a provider-specific convenience command only when it expresses stable domain semantics beyond generic tool execution.
+- Do not add generic Node-tool, Python-tool, npm-package, pip-package, or foreign-runtime manifests to Smoke environments.
+- Do not expose an implementation directory such as `node_modules/...` as the cross-component API when an executable/tool protocol can express the interaction instead.
+
+Current example:
+
+```text
+ghxd required tools
+    github-cdn
+    github-device-auth
+    github-worktree
+
+optional ghxd preset: probot-runtime
+    -> github.com/xd-dash/probot-runtime/cmd/probot-runtime@<exact-sha>
+    -> Go wrapper materializes exact JS payload
+    -> wrapper launches Node/Probot
+```
+
+This boundary deliberately makes the wrapper repository responsible for becoming a well-behaved Go tool instead of making Smoke responsible for every implementation language used by its tools.
+
 ## Logmash source grammar
 
 A source selector is `COUNTRY:REGION:CHANNEL`; pattern selectors use `COUNTRY:REGION:PATTERN`.
@@ -303,16 +347,17 @@ When modifying Smoke/Logmash:
 
 1. Preserve the smallest composition primitive that satisfies the requirement.
 2. Prefer import-time composition over runtime discovery.
-3. Prefer context cancellation and ownership over shared mutable state.
-4. Keep process-global cwd/environment mutation out of reusable execution paths.
-5. Serialize shared on-disk transitions across processes, not merely goroutines.
-6. Prefer immutable runtime snapshots over long-lived canonical-state locks.
-7. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
-8. Keep stdout default and attached unless explicitly removed.
-9. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
-10. Keep DNS discovery free of credentials and runtime dataset/channel state.
-11. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, or rebuild invariants touched by the change.
-12. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
-13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
+3. Keep Smoke environment dependencies Go-native; require foreign-runtime capabilities to provide their own Go tool capsule rather than adding package-manager-specific state to Smoke.
+4. Prefer context cancellation and ownership over shared mutable state.
+5. Keep process-global cwd/environment mutation out of reusable execution paths.
+6. Serialize shared on-disk transitions across processes, not merely goroutines.
+7. Prefer immutable runtime snapshots over long-lived canonical-state locks.
+8. Preserve the composition/workspace identity pair through environment and unattended-runtime boundaries.
+9. Keep stdout default and attached unless explicitly removed.
+10. Keep unattended supervision limited to start/list/stop and preserve lease-backed process identity.
+11. Keep DNS discovery free of credentials and runtime dataset/channel state.
+12. Add focused tests for parser, lifecycle, resolver, provider, environment, workspace, identity, session, callback, registry, or rebuild invariants touched by the change.
+13. Run `go vet ./...` and `go test -race ./...` on the exact final candidate; then require normal `main` CI after merge.
+14. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
-Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
+Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, custom environment dependency graph, or language-specific package manager to Smoke, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, Go tool wrappers, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
