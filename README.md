@@ -115,6 +115,37 @@ List the commands present in the current binary with:
 smoke commands
 ```
 
+## ghxd tool environments
+
+`ghxd` is Smoke's GitHub-specific Go tool environment. Its required tools are installed through ordinary Go `tool` directives.
+
+Bootstrap the normal environment:
+
+```sh
+smoke ghxd bootstrap
+```
+
+Optional capability sets are presets. For example, Probot is implemented in JavaScript but is exposed by its repository as a Go tool wrapper, so Smoke still sees only a Go tool:
+
+```sh
+smoke ghxd bootstrap --preset probot-runtime
+```
+
+or add the preset later:
+
+```sh
+smoke ghxd preset ghxd probot-runtime
+```
+
+Then invoke the wrapper through the existing ghxd tool path:
+
+```sh
+smoke ghxd tool probot-runtime redis-schema-smoke
+smoke ghxd tool probot-runtime serve
+```
+
+A plain `ghxd` environment does not require or install `probot-runtime`. Node/npm are requirements of the optional Probot tool when that wrapper is actually invoked; Smoke does not manage npm packages itself.
+
 ## Logmash source grammar
 
 A Redis subscription is one atomic geographic source relationship:
@@ -259,64 +290,3 @@ no terminal consumer
 shell returns
 runtime continues
 ```
-
-For an unattended runtime, Smoke starts another process from the exact same executable. On Unix the child starts in a new OS session. No socket, output log, `tail`, `nohup`, resident daemon, or data IPC is required.
-
-Only unattended runtimes are registered as sessions:
-
-```sh
-smoke logmash list
-smoke logmash stop <session-id>
-```
-
-`stop` sends `SIGTERM` on Unix, cancels the root runtime context, closes the Redis subscriptions, lets Logmash finish callback supervision, and exits the process.
-
-If stdout is disabled but shell-owned lifetime is still useful for debugging, explicitly keep the runtime attached:
-
-```sh
-smoke logmash \
-  us:west:events \
-  --no-stdout \
-  --attached \
-  --into axiom eu mydataset
-```
-
-The lifecycle rule is intentionally small:
-
-```text
-                 stdout?
-                    │
-           ┌────────┴────────┐
-          yes                no
-           │                  │
-       attached          unattended
-           │                  │
-    output visible        shell returns
-      shell waits          session ID
-    Ctrl+C stops it        stop ID
-```
-
-## Package direction
-
-The intended dependency direction is:
-
-```text
-smoke core
-  command registry
-  selfbuild/recomposition
-  application dispatcher
-        ↑
-        │ imports core contracts
-        │
-optional command/provider packages
-  cmd/logmash
-  future providers/commands
-        ↑
-        │ selected by local composition imports
-        │
-local smoke composition main.go
-```
-
-Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
-
-`xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash owns subscription and callback supervision; Smoke only owns composition plus the small unattended-runtime start/list/stop boundary.
