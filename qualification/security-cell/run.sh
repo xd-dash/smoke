@@ -107,7 +107,7 @@ ciphertext_b64="$(printf '%s' "$encrypt_response" | jq -er '.data')"
 (
   cd "$helpers"
   go run ./resolve.go \
-    "http://127.0.01:${prajapati_port}" \
+    "http://127.0.0.1:${prajapati_port}" \
     "$artifacts/logma.token" \
     "$ciphertext_b64" \
     "$binding_digest" \
