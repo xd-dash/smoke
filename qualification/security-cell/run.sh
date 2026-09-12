@@ -15,11 +15,12 @@ runtime="$work/runtime"
 cell="$work/cell"
 cell_id="${AGNI_CELL_ID:-smoke-fatline}"
 prajapati_port="${PRAJAPATI_PORT:-18081}"
-logma_redis_port="${LOGMA_REDIS_PORT:-16379}"
+logma_redis_container="smoke-${cell_id}-logma-redis"
 acl_password='smoke-logma-local-acl-password'
 secret_plaintext='smoke-axiom-token-value'
 
 cleanup() {
+  docker rm -f "$logma_redis_container" >/dev/null 2>&1 || true
   AGNI_CELL_ID="$cell_id" AGNI_CELL_ROOT="$cell" \
     bash "$AGNI_DIR/local/security-cell.sh" stop >/dev/null 2>&1 || true
 }
@@ -53,8 +54,8 @@ cp "$script_dir/resolve.go.tmpl" "$helpers/resolve.go"
 binding_digest="$(cat "$artifacts/binding.digest")"
 [[ "$binding_digest" == sha256:* ]]
 
-# Agni owns disposable placement. Smoke owns the exact behavior recipe and
-# supplies already-compiled identity/policy artifacts.
+# Agni owns disposable security-cell placement. Smoke owns the exact behavior
+# recipe and supplies already-compiled identity/policy artifacts.
 AGNI_CELL_ID="$cell_id" \
 AGNI_CELL_ROOT="$cell" \
 MARAI_DIR="$MARAI_DIR" \
@@ -62,12 +63,31 @@ PRAJAPATI_DIR="$PRAJAPATI_DIR" \
 PRAJAPATI_TENANT_REGISTRY_FILE="$artifacts/registry.json" \
 PRAJAPATI_ED25519_KEYS_FILE="$artifacts/keys.json" \
 PRAJAPATI_PORT="$prajapati_port" \
-LOGMA_REDIS_PORT="$logma_redis_port" \
   bash "$AGNI_DIR/local/security-cell.sh" start >"$artifacts/agni-start.out"
 
 agni() {
   AGNI_CELL_ID="$cell_id" AGNI_CELL_ROOT="$cell" \
     bash "$AGNI_DIR/local/security-cell.sh" "$@"
+}
+
+start_logma_redis_fixture() {
+  docker run -d --name "$logma_redis_container" \
+    redis:7.2.5-alpine \
+    redis-server --save '' --appendonly no >/dev/null
+
+  for _ in $(seq 1 100); do
+    if docker exec "$logma_redis_container" redis-cli ping 2>/dev/null | grep -qx PONG; then
+      return 0
+    fi
+    if ! docker inspect -f '{{.State.Running}}' "$logma_redis_container" 2>/dev/null | grep -q true; then
+      docker logs "$logma_redis_container" >&2 || true
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "Logma Redis ACL fixture did not become ready" >&2
+  docker logs "$logma_redis_container" >&2 || true
+  return 1
 }
 
 # Lifecycle authority is explicit and separate from Prajapati. KMS.CREATE
@@ -160,8 +180,8 @@ curl -fsS \
   | jq -e '.plaintext | type == "string" and length > 0' >/dev/null
 
 # Apply Logma's compiled local Redis execution identity to a real Redis 7.2.5
-# instance. This identity is intentionally not the ed25519 Fatline principal.
-logma_redis_container="agni-${cell_id}-logma-redis"
+# fixture owned by this qualification, not by Agni's security-cell backend.
+start_logma_redis_fixture
 redis_username="$(jq -er '.Username' "$artifacts/redis-execution.json")"
 mapfile -t redis_rules < <(jq -er '.Rules[]' "$artifacts/redis-execution.json")
 [[ "$redis_username" != ed25519:* ]]
