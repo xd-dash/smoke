@@ -1,0 +1,93 @@
+name: Fatline security cell
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CROSS_REPO_READ_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN }}
+      MARAI_REF: 31aba3b13c19c765e22360f6b1c53b226fb0f875
+      PRAJAPATI_REF: 4b00a47b870ddcb6bf3f8cdc60619ba1a1781962
+      LOGMA_REF: 01cfdaff3992913a7a4e20fd0a825efd383420d2
+      RATELIMITER_REF: 669259de3c37d0594880f3cb0fe3c5049416b366
+      AGNI_REF: 1fdb716144cc6f7414c1e9030f78e6c73f742da6
+    steps:
+      - name: Require caller-owned private source authority
+        shell: bash
+        run: |
+          if [ -z "$CROSS_REPO_READ_TOKEN" ]; then
+            echo "CROSS_REPO_READ_TOKEN is required for exact private-source qualification; Huram normally owns this authority." >&2
+            exit 1
+          fi
+
+      - name: Check out Smoke qualification
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: smoke
+
+      - name: Check out exact Marai
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: xd-dash/marai
+          ref: ${{ env.MARAI_REF }}
+          token: ${{ env.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: marai
+
+      - name: Check out exact Prajapati
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: xd-dash/prajapati
+          ref: ${{ env.PRAJAPATI_REF }}
+          token: ${{ env.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: prajapati
+
+      - name: Check out exact Logma
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: xd-dash/logma
+          ref: ${{ env.LOGMA_REF }}
+          token: ${{ env.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: logma
+
+      - name: Check out exact ratelimiter
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: dash-xd/ratelimiter
+          ref: ${{ env.RATELIMITER_REF }}
+          token: ${{ env.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: ratelimiter
+
+      - name: Check out exact Agni
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: dash-xd/agni
+          ref: ${{ env.AGNI_REF }}
+          token: ${{ env.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: agni
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.x"
+          cache: false
+
+      - name: Qualify exact local Fatline security cell
+        env:
+          MARAI_DIR: ${{ github.workspace }}/marai
+          PRAJAPATI_DIR: ${{ github.workspace }}/prajapati
+          LOGMA_DIR: ${{ github.workspace }}/logma
+          RATELIMITER_DIR: ${{ github.workspace }}/ratelimiter
+          AGNI_DIR: ${{ github.workspace }}/agni
+          SMOKE_SECURITY_CELL_WORK: ${{ runner.temp }}/fatline-security-cell
+        run: bash smoke/qualification/security-cell/run.sh

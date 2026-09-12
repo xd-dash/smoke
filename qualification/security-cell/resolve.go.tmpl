@@ -1,0 +1,39 @@
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/xd-dash/logma/secrets"
+)
+
+func main() {
+	if len(os.Args) != 8 {
+		panic("usage: resolve <base-url> <token-file> <ciphertext-b64> <artifact-binding-digest> <expected-binding-digest> <output-file> <key-id>")
+	}
+	baseURL := os.Args[1]
+	token, err := os.ReadFile(os.Args[2])
+	if err != nil {
+		panic(err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(os.Args[3])
+	if err != nil {
+		panic(err)
+	}
+	artifact := secrets.NewArtifact("axiom-token", 1, os.Args[7], ciphertext, os.Args[4])
+	client := secrets.Client{
+		BaseURL:       baseURL,
+		BindingDigest: os.Args[5],
+	}
+	plaintext, err := client.Decrypt(context.Background(), artifact, strings.TrimSpace(string(token)))
+	if err != nil {
+		panic(err)
+	}
+	if err := secrets.Materialize(os.Args[6], plaintext); err != nil {
+		panic(err)
+	}
+	fmt.Printf("materialized=%s bytes=%d\n", os.Args[6], len(plaintext))
+}
