@@ -16,7 +16,7 @@ jobs:
       PRAJAPATI_REF: 4b00a47b870ddcb6bf3f8cdc60619ba1a1781962
       LOGMA_REF: 01cfdaff3992913a7a4e20fd0a825efd383420d2
       RATELIMITER_REF: 669259de3c37d0594880f3cb0fe3c5049416b366
-      AGNI_REF: 9de1431d6906486d81edc5fad032fc926ff0d03c
+      AGNI_REF: 4a949961baeec3af1bf7db2283d615122c11a5e6
     steps:
       - name: Require caller-owned private source authority
         shell: bash
