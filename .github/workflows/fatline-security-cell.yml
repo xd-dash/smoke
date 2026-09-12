@@ -13,9 +13,9 @@ jobs:
     env:
       CROSS_REPO_READ_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN }}
       MARAI_REF: 31aba3b13c19c765e22360f6b1c53b226fb0f875
-      PRAJAPATI_REF: 36bac44b3ea5e68c39822354f08f6e6b422c2583
-      LOGMA_REF: ac5226fdbd5bcefe290bcc0fda763a8fd2f2dca5
-      RATELIMITER_REF: e7d596b9a1b14e3cda213ebac4e943f3ef54cae4
+      PRAJAPATI_REF: 6553ab41c059f6a59de42ec2b7937551f5b4b8b6
+      LOGMA_REF: 01cfdaff3992913a7a4e20fd0a825efd383420d2
+      RATELIMITER_REF: 7d4cb05d336c7de16d749a6a19cb607d3d0946dc
       AGNI_REF: 9de1431d6906486d81edc5fad032fc926ff0d03c
     steps:
       - name: Require caller-owned private source authority
