@@ -70,9 +70,10 @@ agni() {
     bash "$AGNI_DIR/local/security-cell.sh" "$@"
 }
 
-# Lifecycle authority is explicit and separate from Prajapati.
-agni lifecycle KMS.CREATE logma-secret | grep -qx OK
-agni lifecycle KMS.CREATE gateway-key | grep -qx OK
+# Lifecycle authority is explicit and separate from Prajapati. KMS.CREATE
+# returns the initial primary key version, not a generic OK reply.
+agni lifecycle KMS.CREATE logma-secret | grep -qx 1
+agni lifecycle KMS.CREATE gateway-key | grep -qx 1
 
 ready=0
 for _ in $(seq 1 100); do
@@ -106,7 +107,7 @@ ciphertext_b64="$(printf '%s' "$encrypt_response" | jq -er '.data')"
 (
   cd "$helpers"
   go run ./resolve.go \
-    "http://127.0.0.1:${prajapati_port}" \
+    "http://127.0.01:${prajapati_port}" \
     "$artifacts/logma.token" \
     "$ciphertext_b64" \
     "$binding_digest" \
