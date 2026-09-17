@@ -19,15 +19,22 @@ func New() Provider { return Provider{} }
 func (Provider) Schemes() []string { return []string{"redis", "rediss", "redis+unix"} }
 
 func (p Provider) Run(ctx context.Context, u *url.URL, dispatcher *callback.Dispatcher) error {
-	target, channels, patterns, err := targetFromURL(u)
+	sub, err := SubscriptionFromURL(u)
 	if err != nil {
 		return err
 	}
-	return p.RunSubscription(ctx, Subscription{
-		Target:   target,
-		Channels: channels,
-		Patterns: patterns,
-	}, dispatcher)
+	return p.RunSubscription(ctx, sub, dispatcher)
+}
+
+// SubscriptionFromURL parses an advertised Redis endpoint into the same typed
+// subscription boundary used by discovered targets. It performs no I/O and
+// persists no state.
+func SubscriptionFromURL(u *url.URL) (Subscription, error) {
+	target, channels, patterns, err := targetFromURL(u)
+	if err != nil {
+		return Subscription{}, err
+	}
+	return Subscription{Target: target, Channels: channels, Patterns: patterns}, nil
 }
 
 func targetFromURL(u *url.URL) (Target, []string, []string, error) {
