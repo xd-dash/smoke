@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -20,7 +21,7 @@ import (
 
 type sourceSelector struct { Country, Region, Value string; Pattern bool }
 type sourceSubscription struct { Source, Profile string; Channels, Patterns []string; Target redisprovider.Target; AuthProvider string }
-type cliArgs struct { Sources []sourceSelector; Into []intoSpec; Callbacks []string; Attached, Stdout bool; Policy callback.FailurePolicy; AuthProvider string }
+type cliArgs struct { Sources []sourceSelector; Direct []*url.URL; Into []intoSpec; Callbacks []string; Attached, Stdout bool; Policy callback.FailurePolicy; AuthProvider string }
 
 func init() { command.Register("logmash", Run) }
 
@@ -76,7 +77,7 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 	}
 	sources := make([]string, 0, len(groups)); for source := range groups { sources = append(sources, source) }; sort.Strings(sources)
 	authRegistry, err := redisauth.New(redisauth.None{}, redisauth.PasswordEnv{}, redisauth.ACLEnv{}, redisauth.AutoEnv{}); if err != nil { return nil, fmt.Errorf("auth registry: %w", err) }
-	out := make([]sourceSubscription, 0, len(sources))
+	out := make([]sourceSubscription, 0, len(sources)+len(cfg.Direct))
 	for _, source := range sources {
 		group := groups[source]; profile := sourceProfile(group.country, group.region)
 		target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile); if err != nil { return nil, fmt.Errorf("resolve %s (%s): %w", source, profile, err) }
@@ -85,6 +86,19 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 		credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile); if err != nil { return nil, fmt.Errorf("%s auth provider %s: %w", source, authProvider, err) }
 		target = credentials.Apply(target); target.Source = source
 		out = append(out, sourceSubscription{Source: source, Profile: profile, Channels: sortedKeys(group.channels), Patterns: sortedKeys(group.patterns), Target: target, AuthProvider: authProvider})
+	}
+	for _, advertised := range cfg.Direct {
+		sub, err := redisprovider.SubscriptionFromURL(advertised); if err != nil { return nil, fmt.Errorf("resolve advertised Redis source: %w", err) }
+		authProvider := "embedded"
+		if sub.Target.Password == "" {
+			authProvider = cfg.AuthProvider
+			if authProvider == "" { authProvider = "auto-env" }
+			authProfile := sub.Target.AuthProfile
+			if authProfile == "" { authProfile = "direct" }
+			credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile); if err != nil { return nil, fmt.Errorf("%s auth provider %s: %w", sub.Target.Source, authProvider, err) }
+			sub.Target = credentials.Apply(sub.Target)
+		}
+		out = append(out, sourceSubscription{Source: sub.Target.Source, Profile: "direct", Channels: sub.Channels, Patterns: sub.Patterns, Target: sub.Target, AuthProvider: authProvider})
 	}
 	return out, nil
 }
@@ -142,11 +156,26 @@ func parseArgs(args []string) (cliArgs, error) {
 		case "--auth-provider": i++; if i >= len(args) { return cfg, fmt.Errorf("--auth-provider requires a value") }; cfg.AuthProvider = args[i]
 		case "--attached": cfg.Attached = true
 		case "--no-stdout", "-q": cfg.Stdout = false
-		default: if strings.HasPrefix(args[i], "-") { return cfg, fmt.Errorf("unknown option %q", args[i]) }; selector, err := parseSourceSelector(args[i], false); if err != nil { return cfg, err }; cfg.Sources = append(cfg.Sources, selector)
+		default:
+			if strings.HasPrefix(args[i], "-") { return cfg, fmt.Errorf("unknown option %q", args[i]) }
+			if advertised, ok, err := parseAdvertisedRedisSource(args[i]); ok || err != nil { if err != nil { return cfg, err }; cfg.Direct = append(cfg.Direct, advertised); continue }
+			selector, err := parseSourceSelector(args[i], false); if err != nil { return cfg, err }; cfg.Sources = append(cfg.Sources, selector)
 		}
 	}
-	if len(cfg.Sources) == 0 { return cfg, fmt.Errorf("usage: logmash COUNTRY:REGION:CHANNEL [COUNTRY:REGION:CHANNEL ...] [--pattern COUNTRY:REGION:GLOB] [--no-stdout] [--attached] [--into PROVIDER PROFILE TARGET]") }
+	if len(cfg.Sources) == 0 && len(cfg.Direct) == 0 { return cfg, fmt.Errorf("usage: logmash (COUNTRY:REGION:CHANNEL|REDIS_URL) [...] [--pattern COUNTRY:REGION:GLOB] [--no-stdout] [--attached] [--into PROVIDER PROFILE TARGET]") }
 	return cfg, nil
+}
+
+func parseAdvertisedRedisSource(value string) (*url.URL, bool, error) {
+	u, err := url.Parse(strings.TrimSpace(value))
+	if err != nil { return nil, false, err }
+	switch u.Scheme {
+	case "redis", "rediss", "redis+unix":
+		if _, err := redisprovider.SubscriptionFromURL(u); err != nil { return nil, true, err }
+		return u, true, nil
+	default:
+		return nil, false, nil
+	}
 }
 
 func parseSourceSelector(value string, pattern bool) (sourceSelector, error) { value = strings.TrimSpace(value); parts := strings.SplitN(value, ":", 3); if len(parts) != 3 { return invalidSourceSelector(value, pattern) }; country, region, item := strings.ToLower(strings.TrimSpace(parts[0])), strings.ToLower(strings.TrimSpace(parts[1])), strings.TrimSpace(parts[2]); if country == "" || region == "" || item == "" || len(country) != 2 { return invalidSourceSelector(value, pattern) }; return sourceSelector{Country: country, Region: region, Value: item, Pattern: pattern}, nil }
