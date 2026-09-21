@@ -53,6 +53,23 @@ func VerifyRestart(ctx context.Context, lifecycle Lifecycle, client Client) (res
 	result.RouterAStopped=true
 	if _,err=lifecycle.Status(ctx); err==nil { return result,fmt.Errorf("router A still reports running after stop") }
 
+	if _,err=lifecycle.Run(ctx); err!=nil { return result,fmt.Errorf("start router B: %w",err) }
+	started=true
+
+	runBody,_,err:=client.DeliveryRun(ctx,25)
+	if err!=nil { return result,fmt.Errorf("process delivery after restart: %w",err) }
+	run,err:=decodeDeliveryRun(runBody)
+	if err!=nil { return result,err }
+	result.ProcessedAfterRestart=containsDone(run,fixture.DeliveryID)
+	if !result.ProcessedAfterRestart { return result,fmt.Errorf("delivery %s was not completed by router B",fixture.DeliveryID) }
+
+	secondBody,_,err:=client.DeliveryRun(ctx,25)
+	if err!=nil { return result,fmt.Errorf("verify settled delivery: %w",err) }
+	second,err:=decodeDeliveryRun(secondBody)
+	if err!=nil { return result,err }
+	result.NotReprocessed=!containsDelivery(second,fixture.DeliveryID)
+	if !result.NotReprocessed { return result,fmt.Errorf("settled delivery %s was processed again",fixture.DeliveryID) }
+
 	return result,nil
 }
 
