@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
+	"io"
 
 	probotrouter "github.com/xd-dash/probot-runtime/router"
 	"github.com/xd-dash/smoke/command"
@@ -44,7 +44,7 @@ func request(ctx context.Context,args []string) error {
 	case "delivery":
 		if len(args)!=6 { return fmt.Errorf("usage: smoke probot request delivery <routing-key> <delivery-id> <event> <signature> <json-file|->") }
 		var payload []byte
-		if args[5]=="-" { payload,err=os.ReadFile("/dev/stdin") } else { payload,err=os.ReadFile(args[5]) }
+		if args[5]=="-" { payload,err=io.ReadAll(os.Stdin) } else { payload,err=os.ReadFile(args[5]) }
 		if err!=nil { return err }
 		body,status,err=client.Delivery(ctx,probotclient.DeliveryRequest{RoutingKey:args[1],DeliveryID:args[2],Event:args[3],Signature:args[4],Body:payload})
 	default:
@@ -58,4 +58,3 @@ func usage() error {
 	return fmt.Errorf("usage: smoke probot run | smoke probot request <registration|delivery|delivery-run|reconciliation> ...")
 }
 
-var _ = strings.TrimSpace
