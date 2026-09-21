@@ -27,7 +27,7 @@ func Run(args []string) error {
 	case "status":
 		state,err:=lifecycle.Status(ctx); if err!=nil { return err }; return printJSON(state)
 	case "verify-restart":
-		return fmt.Errorf("restart verification is not yet available; use run/status/request/stop")
+		result,err:=probotclient.VerifyRestart(ctx,lifecycle,probotclient.Client{BaseURL:os.Getenv("PROBOT_URL"),Token:os.Getenv("PROBOT_RUNTIME_OPERATOR_TOKEN")}); if err!=nil { return err }; return printJSON(result)
 	case "serve-foreground":
 		return probotclient.ServeForeground(ctx,args[1:])
 	case "request":
