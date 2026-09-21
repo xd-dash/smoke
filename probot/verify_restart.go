@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"time"
 )
 
@@ -58,11 +60,18 @@ func VerifyRestart(ctx context.Context,l Lifecycle,client Client) (RestartVerifi
 }
 
 func waitReady(ctx context.Context,client Client,timeout time.Duration) error {
+	base:=client.BaseURL; if base=="" { base="http://127.0.0.1:3000" }
+	u,err:=url.Parse(base); if err!=nil { return err }
+	host:=u.Host
+	if _,_,err:=net.SplitHostPort(host); err!=nil {
+		if u.Scheme=="https" { host=net.JoinHostPort(u.Hostname(),"443") } else { host=net.JoinHostPort(u.Hostname(),"80") }
+	}
 	deadline:=time.Now().Add(timeout)
+	var last error
 	for {
-		_,_,err:=client.Registration(ctx)
-		if err==nil { return nil }
-		if time.Now().After(deadline) { return fmt.Errorf("Probot router did not become ready: %w",err) }
+		conn,err:=net.DialTimeout("tcp",host,250*time.Millisecond)
+		if err==nil { _=conn.Close(); return nil }; last=err
+		if time.Now().After(deadline) { return fmt.Errorf("Probot router did not become ready: %w",last) }
 		select { case <-ctx.Done(): return ctx.Err(); case <-time.After(100*time.Millisecond): }
 	}
 }
