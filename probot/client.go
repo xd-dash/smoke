@@ -18,6 +18,13 @@ type Client struct {
 	HTTP *http.Client
 }
 
+type DeliveryResponse struct {
+	Accepted bool `json:"accepted"`
+	Duplicate bool `json:"duplicate"`
+	DeliveryID string `json:"deliveryId"`
+	ProviderDeliveryID string `json:"providerDeliveryId"`
+}
+
 type DeliveryRequest struct {
 	RoutingKey string
 	DeliveryID string
@@ -56,6 +63,14 @@ func (c Client) Delivery(ctx context.Context, in DeliveryRequest) ([]byte,int,er
 		"Content-Type":"application/json","X-GitHub-Delivery":in.DeliveryID,"X-GitHub-Event":in.Event,"X-Hub-Signature-256":in.Signature,
 	})
 }
+func (c Client) PublishDelivery(ctx context.Context, in DeliveryRequest) (DeliveryResponse, error) {
+	body,_,err:=c.Delivery(ctx,in); if err!=nil { return DeliveryResponse{},err }
+	var out DeliveryResponse
+	if err=json.Unmarshal(body,&out); err!=nil { return DeliveryResponse{},fmt.Errorf("decode Probot delivery response: %w",err) }
+	if out.ProviderDeliveryID=="" { return DeliveryResponse{},fmt.Errorf("Probot delivery response is missing providerDeliveryId") }
+	return out,nil
+}
+
 func (c Client) DeliveryRun(ctx context.Context, limit int) ([]byte,int,error) {
 	if limit<=0 { limit=25 }
 	return c.do(ctx,http.MethodPost,"/delivery-runs?limit="+strconv.Itoa(limit),nil,nil)
