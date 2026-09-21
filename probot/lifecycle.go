@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"net/http"
@@ -72,11 +73,21 @@ func (l Lifecycle) runDirect(ctx context.Context) (State,error) {
 	exe,err:=os.Executable(); if err!=nil { return State{},err }
 	log,err:=os.OpenFile(l.logPath(),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if err!=nil { return State{},err }; defer log.Close()
 	cmd:=exec.Command(exe,"probot","serve-foreground")
-	cmd.Stdout=log; cmd.Stderr=log; cmd.Env=os.Environ()
+	cmd.Stdout=log; cmd.Stderr=log; cmd.Env=routerEnv(l.URL)
 	if err:=cmd.Start(); err!=nil { return State{},err }
 	state:=State{Backend:"direct",PID:cmd.Process.Pid,URL:l.URL,StartedAt:time.Now().UTC()}
 	if err:=l.save(state); err!=nil { _=cmd.Process.Kill(); return State{},err }
 	return state,nil
+}
+
+func routerEnv(rawURL string) []string {
+	env:=os.Environ()
+	u,err:=url.Parse(rawURL); if err!=nil || u.Hostname()=="" { return env }
+	host:=u.Hostname(); port:=u.Port()
+	if port=="" { if u.Scheme=="https" { port="443" } else { port="80" } }
+	if _,ok:=os.LookupEnv("HOST"); !ok { env=append(env,"HOST="+host) }
+	if _,ok:=os.LookupEnv("PORT"); !ok { env=append(env,"PORT="+port) }
+	return env
 }
 
 func (l Lifecycle) runPodman(ctx context.Context) (State,error) {
