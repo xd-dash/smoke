@@ -20,7 +20,6 @@ import (
 const DefaultEnvironment = "ghxd"
 
 const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@599b3ffb7b0437ed10c80e8677d15a40e954901c"
-const probotRuntimeToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime@7a01a3ec135f52940c01358ec5da3c8ff116eaec"
 
 // ToolSpecs is the required ghxd capability set. Optional capabilities belong
 // to Presets so their absence never invalidates a normal ghxd environment.
@@ -30,12 +29,7 @@ var ToolSpecs = []string{
 	defaultWorktreeToolSpec,
 }
 
-// Presets are optional groups of ordinary Go tools. A tool may internally own
-// another runtime (for example Node/Probot), but that implementation detail is
-// deliberately outside Smoke's environment model.
-var Presets = map[string][]string{
-	"probot-runtime": {probotRuntimeToolSpec},
-}
+// Presets remain available for GitHub-specific optional tool groups.\nvar Presets = map[string][]string{}
 
 func Apply(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
