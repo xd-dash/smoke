@@ -70,6 +70,14 @@ func VerifyRestart(ctx context.Context, lifecycle Lifecycle, client Client) (res
 	result.NotReprocessed=!containsDelivery(second,fixture.DeliveryID)
 	if !result.NotReprocessed { return result,fmt.Errorf("settled delivery %s was processed again",fixture.DeliveryID) }
 
+	duplicate,err:=client.PublishDelivery(ctx,request)
+	if err!=nil { return result,fmt.Errorf("republish fixture delivery: %w",err) }
+	result.DuplicateDetected=duplicate.Duplicate
+	if !result.DuplicateDetected { return result,fmt.Errorf("duplicate GitHub delivery %s was not detected",fixture.DeliveryID) }
+	if duplicate.ProviderDeliveryID!=result.ProviderDeliveryID {
+		return result,fmt.Errorf("duplicate delivery changed provider identity: %s -> %s",result.ProviderDeliveryID,duplicate.ProviderDeliveryID)
+	}
+
 	return result,nil
 }
 
