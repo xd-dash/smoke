@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/xd-dash/probot-runtime v0.0.0-20260921042852-9d793181cd39
+	github.com/xd-dash/probot-runtime v0.0.0-20260921043836-eca8a59d43fc
 )
 
 require (
