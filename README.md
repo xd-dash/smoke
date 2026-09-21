@@ -115,36 +115,34 @@ List the commands present in the current binary with:
 smoke commands
 ```
 
-## ghxd tool environments
+## Probot composition
 
-`ghxd` is Smoke's GitHub-specific Go tool environment. Its required tools are installed through ordinary Go `tool` directives.
-
-Bootstrap the normal environment:
+Probot is independent GitHub App infrastructure rather than a ghxd preset. It is an optional Smoke command composed through ordinary Go imports:
 
 ```sh
-smoke ghxd bootstrap
+smoke compose add github.com/xd-dash/smoke/cmd/probot
 ```
 
-Optional capability sets are presets. `probot-runtime` is implemented in JavaScript internally, but its repository exposes a Go tool wrapper, so Smoke and `ghxd` still see one ordinary Go tool:
+The command imports the Go router package owned by `xd-dash/probot-runtime`; that repository remains authoritative for materializing and launching its Node runtime. Smoke does not duplicate npm or Node module preparation.
+
+Run the router directly when Node is already available:
 
 ```sh
-smoke ghxd bootstrap --preset probot-runtime
+smoke probot run
 ```
 
-or add it later:
+Use the resource-aware client surface for local and deployment smoke operations:
 
 ```sh
-smoke ghxd preset ghxd probot-runtime
+smoke probot request registration
+smoke probot request delivery <routing-key> <delivery-id> <event> <signature> <json-file|->
+smoke probot request delivery-run [limit]
+smoke probot request reconciliation <routing-key>
 ```
 
-Invoke it through the existing ghxd tool path:
+`PROBOT_URL` selects the router base URL (default `http://127.0.0.1:3000`), and `PROBOT_RUNTIME_OPERATOR_TOKEN` is used for operator resources. Podman, when selected for isolated lifecycle testing, belongs to Smoke orchestration rather than the Probot runtime package.
 
-```sh
-smoke ghxd tool probot-runtime redis-schema-smoke
-smoke ghxd tool probot-runtime serve
-```
-
-A plain `ghxd` environment does not install or require `probot-runtime`. Node/npm are requirements of the optional wrapper only when that tool is invoked; Smoke does not manage npm packages or JavaScript module directories.
+`ghxd` remains GitHub repository/tooling infrastructure and no longer installs Probot as a preset.
 
 ## Logmash source grammar
 
