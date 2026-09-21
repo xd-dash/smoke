@@ -2,12 +2,13 @@ package probot
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
-	"io"
 
-	probotrouter "github.com/xd-dash/probot-runtime/router"
 	"github.com/xd-dash/smoke/command"
 	probotclient "github.com/xd-dash/smoke/probot"
 )
@@ -17,14 +18,26 @@ func init() { command.Register("probot", Run) }
 func Run(args []string) error {
 	ctx := context.Background()
 	if len(args)==0 { return usage() }
+	lifecycle:=probotclient.DefaultLifecycle()
 	switch args[0] {
 	case "run":
-		return probotrouter.Run(ctx, append([]string{"serve"}, args[1:]...))
+		state,err:=lifecycle.Run(ctx); if err!=nil { return err }; return printJSON(state)
+	case "stop":
+		return lifecycle.Stop(ctx)
+	case "status":
+		state,err:=lifecycle.Status(ctx); if err!=nil { return err }; return printJSON(state)
+	case "serve-foreground":
+		return probotclient.ServeForeground(ctx,args[1:])
 	case "request":
 		return request(ctx,args[1:])
 	default:
 		return usage()
 	}
+}
+
+func printJSON(value any) error {
+	data,err:=json.MarshalIndent(value,"","  "); if err!=nil { return err }
+	fmt.Println(string(data)); return nil
 }
 
 func request(ctx context.Context,args []string) error {
@@ -55,6 +68,5 @@ func request(ctx context.Context,args []string) error {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: smoke probot run | smoke probot request <registration|delivery|delivery-run|reconciliation> ...")
+	return errors.New("usage: smoke probot <run|stop|status|request> ...")
 }
-
