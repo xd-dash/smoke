@@ -165,15 +165,15 @@ Rules:
 Current example:
 
 ```text
-ghxd required tools
-    github-cdn
-    github-device-auth
-    github-worktree
+optional Smoke composition: probot
+    -> github.com/xd-dash/smoke/cmd/probot
+    -> normal Go import of github.com/xd-dash/probot-runtime/router
+    -> probot-runtime owns exact JS payload materialization and Node launch
+    -> Smoke owns local/deployment orchestration and opinionated HTTP operations
 
-optional ghxd preset: probot-runtime
-    -> github.com/xd-dash/probot-runtime/cmd/probot-runtime@<exact-sha>
-    -> Go wrapper materializes exact JS payload
-    -> wrapper launches Node/Probot
+ghxd
+    -> remains a separate GitHub repository/tool environment
+    -> does not own or install Probot
 ```
 
 This boundary deliberately makes the wrapper repository responsible for becoming a well-behaved Go tool instead of making Smoke responsible for every implementation language used by its tools.
