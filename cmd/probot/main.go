@@ -26,7 +26,8 @@ func Run(args []string) error {
 		return lifecycle.Stop(ctx)
 	case "status":
 		state,err:=lifecycle.Status(ctx); if err!=nil { return err }; return printJSON(state)
-	case "verify-restart":
+	case "verify":
+		if len(args) != 2 || args[1] != "restart" { return errors.New("usage: smoke probot verify restart") }
 		result,err:=probotclient.VerifyRestart(ctx,lifecycle,probotclient.Client{BaseURL:os.Getenv("PROBOT_URL"),Token:os.Getenv("PROBOT_RUNTIME_OPERATOR_TOKEN")}); if err!=nil { return err }; return printJSON(result)
 	case "serve-foreground":
 		return probotclient.ServeForeground(ctx,args[1:])
@@ -70,5 +71,5 @@ func request(ctx context.Context,args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: smoke probot <run|status|stop|request|verify-restart> ...")
+	return errors.New("usage: smoke probot <run|status|stop|request|verify> ...")
 }
