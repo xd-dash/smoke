@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"os/exec"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -50,4 +53,35 @@ func TestRouterEnvDerivesListenerFromURL(t *testing.T) {
 	foundHost,foundPort:=false,false
 	for _,entry:=range env { if entry=="HOST=127.0.0.1" { foundHost=true }; if entry=="PORT=43127" { foundPort=true } }
 	if !foundHost || !foundPort { t.Fatalf("derived listener missing: host=%v port=%v",foundHost,foundPort) }
+}
+
+func TestStopWaitsForDirectProcessDestruction(t *testing.T) {
+	if os.Getenv("SMOKE_LIFECYCLE_HELPER") == "1" {
+		signal := make(chan os.Signal, 1)
+		_ = signal
+		for { time.Sleep(time.Second) }
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestStopWaitsForDirectProcessDestruction")
+	cmd.Env = append(os.Environ(), "SMOKE_LIFECYCLE_HELPER=1")
+	if err := cmd.Start(); err != nil { t.Fatal(err) }
+	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+
+	l := Lifecycle{Dir:t.TempDir(), URL:"http://127.0.0.1:3000", Backend:"direct"}
+	if err := l.save(State{Backend:"direct", PID:cmd.Process.Pid, URL:l.URL, StartedAt:time.Now().UTC()}); err != nil { t.Fatal(err) }
+	if err := l.Stop(context.Background()); err != nil { t.Fatal(err) }
+	if processAlive(cmd.Process.Pid) { t.Fatalf("process %d remains live after Stop",cmd.Process.Pid) }
+	if _,err := os.Stat(l.statePath()); !os.IsNotExist(err) { t.Fatalf("state file remains after Stop: %v",err) }
+}
+
+func TestProcessAliveTreatsZombieAsDeadOnLinux(t *testing.T) {
+	if _,err:=os.Stat("/proc/self/stat"); err!=nil { t.Skip("requires procfs") }
+	cmd:=exec.Command("sh","-c","exit 0")
+	if err:=cmd.Start(); err!=nil { t.Fatal(err) }
+	pid:=cmd.Process.Pid
+	deadline:=time.Now().Add(time.Second)
+	for processAlive(pid) && time.Now().Before(deadline) { time.Sleep(10*time.Millisecond) }
+	if processAlive(pid) { t.Fatalf("exited child %s still considered alive",strconv.Itoa(pid)) }
+	_,_ = cmd.Process.Wait()
+	_ = syscall.Signal(0)
 }
