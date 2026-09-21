@@ -14,7 +14,7 @@ func TestDeliveryRequestEncodesGitHubProtocol(t *testing.T) {
 	var gotHeaders http.Header
 	server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		gotPath=r.URL.Path; gotHeaders=r.Header.Clone(); gotBody,_=io.ReadAll(r.Body)
-		w.Header().Set("Content-Type","application/json"); w.WriteHeader(http.StatusAccepted); _,_=w.Write([]byte(`{"accepted":true}`))
+		w.Header().Set("Content-Type","application/json"); w.WriteHeader(http.StatusAccepted); _,_=w.Write([]byte(`{"accepted":true,"deliveryId":"guid-1","providerDeliveryId":"opaque-1"}`))
 	}))
 	defer server.Close()
 	c:=Client{BaseURL:server.URL}
@@ -33,4 +33,12 @@ func TestOperatorRequestsUseBearerToken(t *testing.T) {
 	c:=Client{BaseURL:server.URL,Token:"secret"}
 	if _,_,err:=c.DeliveryRun(context.Background(),4); err!=nil { t.Fatal(err) }
 	if auth!="Bearer secret" { t.Fatalf("authorization=%q",auth) }
+}
+
+func TestPublishDeliveryRequiresDurableIdentity(t *testing.T) {
+	server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){ _,_=w.Write([]byte(`{"accepted":true,"deliveryId":"guid-1"}`)) }))
+	defer server.Close()
+	c:=Client{BaseURL:server.URL}
+	_,err:=c.PublishDelivery(context.Background(),DeliveryRequest{RoutingKey:"app-a",DeliveryID:"guid-1",Event:"push",Signature:"sha256=abc",Body:[]byte(`{}`)})
+	if err==nil { t.Fatal("expected missing provider delivery identity error") }
 }
