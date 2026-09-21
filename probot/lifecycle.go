@@ -112,8 +112,13 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 		p,err:=os.FindProcess(state.PID); if err==nil {
 			_ = p.Signal(syscall.SIGTERM)
 			deadline:=time.Now().Add(5*time.Second)
-			for p.Signal(syscall.Signal(0))==nil && time.Now().Before(deadline) { time.Sleep(50*time.Millisecond) }
-			if p.Signal(syscall.Signal(0))==nil { _=p.Kill() }
+			for processAlive(state.PID) && time.Now().Before(deadline) { time.Sleep(50*time.Millisecond) }
+			if processAlive(state.PID) {
+				_ = p.Kill()
+				killDeadline:=time.Now().Add(2*time.Second)
+				for processAlive(state.PID) && time.Now().Before(killDeadline) { time.Sleep(25*time.Millisecond) }
+				if processAlive(state.PID) { return fmt.Errorf("Probot process %d is still running after kill",state.PID) }
+			}
 		}
 	case "podman":
 		if _,err:=exec.LookPath("podman"); err!=nil { return err }
@@ -124,7 +129,13 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 }
 
 func processAlive(pid int) bool {
-	if pid<=0 { return false }; p,err:=os.FindProcess(pid); return err==nil && p.Signal(syscall.Signal(0))==nil
+	if pid<=0 { return false }
+	// On Linux a terminated child may remain as a zombie briefly. signal 0 still
+	// succeeds for zombies, but they no longer own listeners or runtime state.
+	if data,err:=os.ReadFile(fmt.Sprintf("/proc/%d/stat",pid)); err==nil {
+		if end:=strings.LastIndexByte(string(data), ')'); end>=0 && end+2<len(data) && data[end+2]=='Z' { return false }
+	}
+	p,err:=os.FindProcess(pid); return err==nil && p.Signal(syscall.Signal(0))==nil
 }
 
 func podmanRunning(ctx context.Context,name string) bool {
