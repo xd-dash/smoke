@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 )
 
@@ -50,6 +49,7 @@ func VerifyRestart(ctx context.Context,l Lifecycle,client Client) (RestartVerifi
 	if status=="" { return RestartVerification{},fmt.Errorf("router B did not process durable delivery %s",deliveryID) }
 
 	second,err:=deliveryRun(ctx,client,25); if err!=nil { return RestartVerification{},err }
+	for _,result:=range second.Results { if result.DeliveryID==deliveryID { return RestartVerification{},fmt.Errorf("settled delivery %s was processed again",deliveryID) } }
 	duplicate,err:=client.PublishDelivery(ctx,DeliveryRequest{RoutingKey:fixture.RoutingKey,DeliveryID:deliveryID,Event:"push",Signature:signature,Body:body}); if err!=nil { return RestartVerification{},err }
 	if !duplicate.Duplicate { return RestartVerification{},fmt.Errorf("duplicate GitHub delivery %s was not reported duplicate",deliveryID) }
 	if err=l.Stop(ctx); err!=nil { return RestartVerification{},err }
@@ -60,8 +60,7 @@ func VerifyRestart(ctx context.Context,l Lifecycle,client Client) (RestartVerifi
 func waitReady(ctx context.Context,client Client,timeout time.Duration) error {
 	deadline:=time.Now().Add(timeout)
 	for {
-		req,err:=http.NewRequestWithContext(ctx,http.MethodPost,"",nil); _=req
-		_,_,err=client.Registration(ctx)
+		_,_,err:=client.Registration(ctx)
 		if err==nil { return nil }
 		if time.Now().After(deadline) { return fmt.Errorf("Probot router did not become ready: %w",err) }
 		select { case <-ctx.Done(): return ctx.Err(); case <-time.After(100*time.Millisecond): }
