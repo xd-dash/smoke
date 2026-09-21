@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 
 	"github.com/xd-dash/smoke/command"
 	"github.com/xd-dash/smoke/environment"
@@ -30,18 +31,28 @@ func runGHXD(args []string) error {
 		for _, spec := range ghxd.ToolSpecs {
 			fmt.Printf("tool\t%s\n", spec)
 		}
+		presets := make([]string, 0, len(ghxd.Presets))
+		for name := range ghxd.Presets {
+			presets = append(presets, name)
+		}
+		sort.Strings(presets)
+		for _, name := range presets {
+			fmt.Printf("preset\t%s\toptional\n", name)
+		}
 		return nil
 	case "bootstrap":
-		if len(args) > 2 {
-			return fmt.Errorf("usage: smoke ghxd bootstrap [environment]")
-		}
-		name := ""
-		if len(args) == 2 {
-			name = args[1]
+		name, presets, err := parseGHXDBootstrap(args[1:])
+		if err != nil {
+			return err
 		}
 		env, err := ghxd.Bootstrap(ctx, name)
 		if err != nil {
 			return err
+		}
+		for _, preset := range presets {
+			if err := ghxd.ApplyPreset(ctx, env.Name, preset); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("ghxd environment %s\n%s\n", env.Name, env.WorkFile)
 		return nil
@@ -50,6 +61,11 @@ func runGHXD(args []string) error {
 			return fmt.Errorf("usage: smoke ghxd apply <environment>")
 		}
 		return ghxd.Apply(ctx, args[1])
+	case "preset":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: smoke ghxd preset <environment> <preset>")
+		}
+		return ghxd.ApplyPreset(ctx, args[1], args[2])
 	case "tool":
 		name, rest, err := parseGHXDEnvironment(args[1:])
 		if err != nil || len(rest) == 0 {
@@ -113,6 +129,28 @@ func runGHXDTool(ctx context.Context, name string, args ...string) error {
 	return runCommand(workspace.Command(ctx, workspace.ToolsDir, goBin, toolArgs...))
 }
 
+func parseGHXDBootstrap(args []string) (string, []string, error) {
+	name := ""
+	var presets []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "--preset":
+			if len(args) < 2 || args[1] == "" {
+				return "", nil, fmt.Errorf("usage: smoke ghxd bootstrap [environment] [--preset <preset>]...")
+			}
+			presets = append(presets, args[1])
+			args = args[2:]
+		default:
+			if name != "" {
+				return "", nil, fmt.Errorf("usage: smoke ghxd bootstrap [environment] [--preset <preset>]...")
+			}
+			name = args[0]
+			args = args[1:]
+		}
+	}
+	return name, presets, nil
+}
+
 func parseGHXDEnvironment(args []string) (string, []string, error) {
 	name := ghxd.DefaultEnvironment
 	if len(args) >= 1 && args[0] == "--env" {
@@ -137,5 +175,5 @@ func ghxdAuthUsage() error {
 }
 
 func ghxdUsage() error {
-	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|tool|auth|worktree> ...")
+	return fmt.Errorf("usage: smoke ghxd <show|bootstrap|apply|preset|tool|auth|worktree> ...")
 }
