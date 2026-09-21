@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"net/http"
 	"strings"
 	"path/filepath"
 	"strconv"
@@ -75,6 +74,7 @@ func (l Lifecycle) runDirect(ctx context.Context) (State,error) {
 	cmd:=exec.Command(exe,"probot","serve-foreground")
 	cmd.Stdout=log; cmd.Stderr=log; cmd.Env=routerEnv(l.URL)
 	if err:=cmd.Start(); err!=nil { return State{},err }
+	go func() { _ = cmd.Wait() }()
 	state:=State{Backend:"direct",PID:cmd.Process.Pid,URL:l.URL,StartedAt:time.Now().UTC()}
 	if err:=l.save(state); err!=nil { _=cmd.Process.Kill(); return State{},err }
 	return state,nil
@@ -103,17 +103,6 @@ func (l Lifecycle) runPodman(ctx context.Context) (State,error) {
 	state:=State{Backend:"podman",Container:name,URL:l.URL,StartedAt:time.Now().UTC()}
 	if err:=l.save(state); err!=nil { _,_=exec.Command("podman","rm","-f",name).CombinedOutput(); return State{},err }
 	return state,nil
-}
-
-func (l Lifecycle) WaitReady(ctx context.Context, timeout time.Duration) error {
-	deadline:=time.Now().Add(timeout)
-	client:=http.Client{Timeout:500*time.Millisecond}
-	for {
-		req,err:=http.NewRequestWithContext(ctx,http.MethodGet,l.URL+"/",nil)
-		if err==nil { if resp,e:=client.Do(req); e==nil { _=resp.Body.Close(); if resp.StatusCode>=200 && resp.StatusCode<500 { return nil } } }
-		if time.Now().After(deadline) { return fmt.Errorf("Probot router at %s did not become ready within %s",l.URL,timeout) }
-		select { case <-ctx.Done(): return ctx.Err(); case <-time.After(100*time.Millisecond): }
-	}
 }
 
 func (l Lifecycle) Stop(ctx context.Context) error {
