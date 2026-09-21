@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -17,15 +17,31 @@ jobs:
           go-version: '1.26.x'
           cache: true
       - name: Authorize private Go modules
+        uses: xd-dash/huram-abi-master/.github/actions/device-auth-router-token@automation
+        id: github-authority
+        with:
+          workload_identity_provider: ${{ vars.GCLOUD_WIF_PROVIDER }}
+          service_account: ${{ vars.GCLOUD_TERRAFORM_SA }}
+          project_id: ${{ vars.GCLOUD_PROJECT_ID }}
+      - name: Configure private Go module transport
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          GH_TOKEN: ${{ steps.github-authority.outputs.access-token }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$GH_TOKEN"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Resolve module graph
         env:
           GOPRIVATE: github.com/xd-dash/*
         run: go mod tidy
-      - env:\n          GOPRIVATE: github.com/xd-dash/*\n        run: go vet ./...
-      - env:\n          GOPRIVATE: github.com/xd-dash/*\n        run: go test -race ./...
+      - name: Vet
+        env:
+          GOPRIVATE: github.com/xd-dash/*
+        run: go vet ./...
+      - name: Test
+        env:
+          GOPRIVATE: github.com/xd-dash/*
+        run: go test -race ./...
       - name: Require committed module graph
         run: git diff --exit-code -- go.mod go.sum
       - name: Upload resolved module graph
