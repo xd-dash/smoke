@@ -1,0 +1,61 @@
+package probot
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	probotrouter "github.com/xd-dash/probot-runtime/router"
+	"github.com/xd-dash/smoke/command"
+	probotclient "github.com/xd-dash/smoke/probot"
+)
+
+func init() { command.Register("probot", Run) }
+
+func Run(args []string) error {
+	ctx := context.Background()
+	if len(args)==0 { return usage() }
+	switch args[0] {
+	case "run":
+		return probotrouter.Run(ctx, append([]string{"serve"}, args[1:]...))
+	case "request":
+		return request(ctx,args[1:])
+	default:
+		return usage()
+	}
+}
+
+func request(ctx context.Context,args []string) error {
+	if len(args)==0 { return usage() }
+	client:=probotclient.Client{BaseURL:os.Getenv("PROBOT_URL"),Token:os.Getenv("PROBOT_RUNTIME_OPERATOR_TOKEN")}
+	var body []byte; var status int; var err error
+	switch args[0] {
+	case "registration":
+		body,status,err=client.Registration(ctx)
+	case "delivery-run":
+		limit:=25
+		if len(args)>1 { limit,err=strconv.Atoi(args[1]); if err!=nil { return fmt.Errorf("limit: %w",err) } }
+		body,status,err=client.DeliveryRun(ctx,limit)
+	case "reconciliation":
+		if len(args)!=2 { return fmt.Errorf("usage: smoke probot request reconciliation <routing-key>") }
+		body,status,err=client.Reconciliation(ctx,args[1])
+	case "delivery":
+		if len(args)!=6 { return fmt.Errorf("usage: smoke probot request delivery <routing-key> <delivery-id> <event> <signature> <json-file|->") }
+		var payload []byte
+		if args[5]=="-" { payload,err=os.ReadFile("/dev/stdin") } else { payload,err=os.ReadFile(args[5]) }
+		if err!=nil { return err }
+		body,status,err=client.Delivery(ctx,probotclient.DeliveryRequest{RoutingKey:args[1],DeliveryID:args[2],Event:args[3],Signature:args[4],Body:payload})
+	default:
+		return usage()
+	}
+	if len(body)>0 { fmt.Println(probotclient.Pretty(body)) } else { fmt.Println(status) }
+	return err
+}
+
+func usage() error {
+	return fmt.Errorf("usage: smoke probot run | smoke probot request <registration|delivery|delivery-run|reconciliation> ...")
+}
+
+var _ = strings.TrimSpace
