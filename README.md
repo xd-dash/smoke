@@ -129,6 +129,8 @@ Run the router directly when Node is already available:
 
 ```sh
 smoke probot run
+smoke probot status
+smoke probot stop
 ```
 
 Use the resource-aware client surface for local and deployment smoke operations:
@@ -140,7 +142,7 @@ smoke probot request delivery-run [limit]
 smoke probot request reconciliation <routing-key>
 ```
 
-`PROBOT_URL` selects the router base URL (default `http://127.0.0.1:3000`), and `PROBOT_RUNTIME_OPERATOR_TOKEN` is used for operator resources. Podman, when selected for isolated lifecycle testing, belongs to Smoke orchestration rather than the Probot runtime package.
+`PROBOT_URL` selects the router base URL (default `http://127.0.0.1:3000`), and `PROBOT_RUNTIME_OPERATOR_TOKEN` is used for operator resources. Lifecycle defaults to the direct backend. Set `SMOKE_PROBOT_BACKEND=podman` and `SMOKE_PROBOT_IMAGE=<image>` for an isolated container boundary; Smoke detects `podman` and fails explicitly if it is unavailable. Podman belongs to Smoke orchestration rather than the Probot runtime package. Both backends preserve the same `run`/`status`/`stop` command surface. Runtime state is kept under `SMOKE_PROBOT_STATE_DIR` (or the user cache directory).
 
 `ghxd` remains GitHub repository/tooling infrastructure and no longer installs Probot as a preset.
 
