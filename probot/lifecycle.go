@@ -91,7 +91,12 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 	state,err:=l.load(); if errors.Is(err,os.ErrNotExist) { return nil }; if err!=nil { return err }
 	switch state.Backend {
 	case "direct":
-		p,err:=os.FindProcess(state.PID); if err==nil { _=p.Signal(syscall.SIGTERM) }
+		p,err:=os.FindProcess(state.PID); if err==nil {
+			_ = p.Signal(syscall.SIGTERM)
+			deadline:=time.Now().Add(5*time.Second)
+			for p.Signal(syscall.Signal(0))==nil && time.Now().Before(deadline) { time.Sleep(50*time.Millisecond) }
+			if p.Signal(syscall.Signal(0))==nil { _=p.Kill() }
+		}
 	case "podman":
 		if _,err:=exec.LookPath("podman"); err!=nil { return err }
 		out,err:=exec.CommandContext(ctx,"podman","rm","-f",state.Container).CombinedOutput(); if err!=nil { return fmt.Errorf("podman rm: %w: %s",err,out) }
