@@ -26,6 +26,8 @@ func Run(args []string) error {
 		return lifecycle.Stop(ctx)
 	case "status":
 		state,err:=lifecycle.Status(ctx); if err!=nil { return err }; return printJSON(state)
+	case "verify-restart":
+		return fmt.Errorf("restart verification is not yet available; use run/status/request/stop")
 	case "serve-foreground":
 		return probotclient.ServeForeground(ctx,args[1:])
 	case "request":
@@ -68,5 +70,5 @@ func request(ctx context.Context,args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: smoke probot <run|stop|status|request> ...")
+	return errors.New("usage: smoke probot <run|status|stop|request|verify-restart> ...")
 }
