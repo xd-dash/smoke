@@ -81,6 +81,12 @@ func VerifyRestart(ctx context.Context, lifecycle Lifecycle, client Client) (res
 	return result,nil
 }
 
+func validateRestartRuns(deliveryID string, first, second deliveryRunResponse) error {
+	if !containsDone(first,deliveryID) { return fmt.Errorf("delivery %s was not completed by router B",deliveryID) }
+	if containsDelivery(second,deliveryID) { return fmt.Errorf("settled delivery %s was processed again",deliveryID) }
+	return nil
+}
+
 func decodeDeliveryRun(body []byte) (deliveryRunResponse,error) {
 	var out deliveryRunResponse
 	if err:=json.Unmarshal(body,&out); err!=nil { return out,fmt.Errorf("decode delivery-run response: %w",err) }
