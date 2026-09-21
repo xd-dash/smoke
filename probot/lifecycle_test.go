@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"os/exec"
-	"strconv"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -57,8 +55,6 @@ func TestRouterEnvDerivesListenerFromURL(t *testing.T) {
 
 func TestStopWaitsForDirectProcessDestruction(t *testing.T) {
 	if os.Getenv("SMOKE_LIFECYCLE_HELPER") == "1" {
-		signal := make(chan os.Signal, 1)
-		_ = signal
 		for { time.Sleep(time.Second) }
 	}
 
@@ -81,7 +77,6 @@ func TestProcessAliveTreatsZombieAsDeadOnLinux(t *testing.T) {
 	pid:=cmd.Process.Pid
 	deadline:=time.Now().Add(time.Second)
 	for processAlive(pid) && time.Now().Before(deadline) { time.Sleep(10*time.Millisecond) }
-	if processAlive(pid) { t.Fatalf("exited child %s still considered alive",strconv.Itoa(pid)) }
+	if processAlive(pid) { t.Fatalf("exited child %d still considered alive",pid) }
 	_,_ = cmd.Process.Wait()
-	_ = syscall.Signal(0)
 }
