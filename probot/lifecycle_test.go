@@ -2,6 +2,8 @@ package probot
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,4 +24,30 @@ func TestPodmanRequiresExplicitImage(t *testing.T) {
 	t.Setenv("PATH",t.TempDir())
 	_,err:=l.Run(context.Background())
 	if err==nil { t.Fatal("expected podman availability error") }
+}
+
+func TestWaitReadyRequiresHTTPResponse(t *testing.T) {
+	server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){ w.WriteHeader(http.StatusNotFound) }))
+	defer server.Close()
+	l:=Lifecycle{Dir:t.TempDir(),URL:server.URL,Backend:"direct"}
+	ctx,cancel:=context.WithTimeout(context.Background(),time.Second); defer cancel()
+	if err:=l.WaitReady(ctx,500*time.Millisecond); err!=nil { t.Fatalf("ready server rejected: %v",err) }
+}
+
+func TestWaitReadyTimesOutWithoutListener(t *testing.T) {
+	l:=Lifecycle{Dir:t.TempDir(),URL:"http://127.0.0.1:1",Backend:"direct"}
+	start:=time.Now()
+	if err:=l.WaitReady(context.Background(),150*time.Millisecond); err==nil { t.Fatal("expected readiness timeout") }
+	if time.Since(start)>time.Second { t.Fatal("readiness timeout was not bounded") }
+}
+
+func TestRouterEnvDerivesListenerFromURL(t *testing.T) {
+	t.Setenv("HOST","")
+	t.Setenv("PORT","")
+	_ = os.Unsetenv("HOST")
+	_ = os.Unsetenv("PORT")
+	env:=routerEnv("http://127.0.0.1:43127")
+	foundHost,foundPort:=false,false
+	for _,entry:=range env { if entry=="HOST=127.0.0.1" { foundHost=true }; if entry=="PORT=43127" { foundPort=true } }
+	if !foundHost || !foundPort { t.Fatalf("derived listener missing: host=%v port=%v",foundHost,foundPort) }
 }
