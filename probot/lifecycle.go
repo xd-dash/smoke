@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"net/http"
@@ -54,11 +55,16 @@ func (l Lifecycle) save(state State) error {
 
 func (l Lifecycle) Run(ctx context.Context) (State,error) {
 	if state,err:=l.Status(ctx); err==nil { return state,fmt.Errorf("probot already running via %s",state.Backend) }
+	var state State
+	var err error
 	switch l.Backend {
-	case "direct": return l.runDirect(ctx)
-	case "podman": return l.runPodman(ctx)
+	case "direct": state,err=l.runDirect(ctx)
+	case "podman": state,err=l.runPodman(ctx)
 	default: return State{},fmt.Errorf("unsupported Probot backend %q (want direct or podman)",l.Backend)
 	}
+	if err!=nil { return State{},err }
+	if err=l.WaitReady(ctx,10*time.Second); err!=nil { _=l.Stop(context.Background()); return State{},err }
+	return state,nil
 }
 
 func (l Lifecycle) runDirect(ctx context.Context) (State,error) {
@@ -88,6 +94,17 @@ func (l Lifecycle) runPodman(ctx context.Context) (State,error) {
 	return state,nil
 }
 
+func (l Lifecycle) WaitReady(ctx context.Context, timeout time.Duration) error {
+	deadline:=time.Now().Add(timeout)
+	client:=http.Client{Timeout:500*time.Millisecond}
+	for {
+		req,err:=http.NewRequestWithContext(ctx,http.MethodGet,l.URL+"/",nil)
+		if err==nil { if resp,e:=client.Do(req); e==nil { _=resp.Body.Close(); if resp.StatusCode>=200 && resp.StatusCode<500 { return nil } } }
+		if time.Now().After(deadline) { return fmt.Errorf("Probot router at %s did not become ready within %s",l.URL,timeout) }
+		select { case <-ctx.Done(): return ctx.Err(); case <-time.After(100*time.Millisecond): }
+	}
+}
+
 func (l Lifecycle) Stop(ctx context.Context) error {
 	state,err:=l.load(); if errors.Is(err,os.ErrNotExist) { return nil }; if err!=nil { return err }
 	switch state.Backend {
@@ -101,8 +118,17 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 	case "podman":
 		if _,err:=exec.LookPath("podman"); err!=nil { return err }
 		out,err:=exec.CommandContext(ctx,"podman","rm","-f",state.Container).CombinedOutput(); if err!=nil { return fmt.Errorf("podman rm: %w: %s",err,out) }
+		if podmanRunning(ctx,state.Container) { return fmt.Errorf("Probot container %s is still running after removal",state.Container) }
 	}
 	return os.Remove(l.statePath())
+}
+
+func processAlive(pid int) bool {
+	if pid<=0 { return false }; p,err:=os.FindProcess(pid); return err==nil && p.Signal(syscall.Signal(0))==nil
+}
+
+func podmanRunning(ctx context.Context,name string) bool {
+	out,err:=exec.CommandContext(ctx,"podman","inspect","-f","{{.State.Running}}",name).CombinedOutput(); return err==nil && string(out)=="true\\n"
 }
 
 func (l Lifecycle) Status(ctx context.Context) (State,error) {
