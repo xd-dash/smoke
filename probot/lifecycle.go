@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"net/http"
+	"strings"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -109,6 +111,23 @@ func (l Lifecycle) Status(ctx context.Context) (State,error) {
 	default: return State{},fmt.Errorf("unknown Probot backend %q",state.Backend)
 	}
 	return state,nil
+}
+
+func (l Lifecycle) WaitReady(ctx context.Context, timeout time.Duration) error {
+	if timeout <= 0 { timeout = 15*time.Second }
+	deadline:=time.Now().Add(timeout)
+	client:=&http.Client{Timeout:500*time.Millisecond}
+	for {
+		req,err:=http.NewRequestWithContext(ctx,http.MethodGet,strings.TrimRight(l.URL,"/")+"/",nil)
+		if err!=nil { return err }
+		resp,err:=client.Do(req)
+		if err==nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 500 { return nil }
+		}
+		if time.Now().After(deadline) { return fmt.Errorf("Probot router at %s did not become ready within %s",l.URL,timeout) }
+		select { case <-ctx.Done(): return ctx.Err(); case <-time.After(100*time.Millisecond): }
+	}
 }
 
 func ServeForeground(ctx context.Context,args []string) error { return probotrouter.Run(ctx,append([]string{"serve"},args...)) }
