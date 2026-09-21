@@ -62,6 +62,7 @@ func (l Lifecycle) Run(ctx context.Context) (State,error) {
 }
 
 func (l Lifecycle) runDirect(ctx context.Context) (State,error) {
+	if err:=os.MkdirAll(l.Dir,0700); err!=nil { return State{},err }
 	exe,err:=os.Executable(); if err!=nil { return State{},err }
 	log,err:=os.OpenFile(l.logPath(),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if err!=nil { return State{},err }; defer log.Close()
 	cmd:=exec.Command(exe,"probot","serve-foreground")
