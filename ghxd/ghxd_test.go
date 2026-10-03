@@ -9,7 +9,7 @@ func TestDefaults(t *testing.T) {
 	want := []string{
 		"github.com/dash-xd/github-cdn@go",
 		"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
-		"github.com/xd-dash/smoke/cmd/github-worktree@bdffac3b4e3da096f4431ecdebc37a154436a24d",
+		"github.com/xd-dash/smoke/cmd/github-worktree@dd0a7471383b4266c0368b089433dac0a4e3b3b5",
 	}
 	if len(ToolSpecs) != len(want) {
 		t.Fatalf("ToolSpecs length = %d, want %d", len(ToolSpecs), len(want))
