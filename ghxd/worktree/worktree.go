@@ -115,7 +115,7 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 
 	authArgs := gitAuthArgs(opts.Token)
 	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", "origin", opts.SHA)
-	if err := run(ctx, "", git, nil, fetchArgs...); err != nil {
+	if err := run(ctx, "", git, gitAuthEnv(opts.Token), fetchArgs...); err != nil {
 		return Result{}, err
 	}
 	actualSHA, err := output(ctx, "", git, nil, "--git-dir="+objectDatabase, "rev-parse", opts.SHA+"^{commit}")
@@ -130,7 +130,7 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	if opts.RoleRef != "" {
 		refspec := "+refs/heads/" + opts.RoleRef + ":refs/remotes/origin/" + opts.RoleRef
 		roleFetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", "origin", refspec)
-		if err := run(ctx, "", git, nil, roleFetchArgs...); err != nil {
+		if err := run(ctx, "", git, gitAuthEnv(opts.Token), roleFetchArgs...); err != nil {
 			return Result{}, err
 		}
 		roleRefSHA, err = output(ctx, "", git, nil, "--git-dir="+objectDatabase, "rev-parse", "refs/remotes/origin/"+opts.RoleRef+"^{commit}")
@@ -197,6 +197,14 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 		Detached:       true,
 		Clean:          true,
 	}, nil
+}
+
+func gitAuthEnv(token string) []string {
+	if token == "" {
+		return nil
+	}
+	env := append([]string(nil), os.Environ()...)
+	return append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 }
 
 func gitAuthArgs(token string) []string {
