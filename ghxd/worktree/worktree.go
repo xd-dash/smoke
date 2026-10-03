@@ -211,7 +211,7 @@ func gitAuthArgs(token string) []string {
 		return nil
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	return []string{"-c", "http.https://x-access-token@github.com/.extraheader=AUTHORIZATION: basic " + encoded}
+	return []string{"-c", "http.extraHeader=AUTHORIZATION: basic " + encoded}
 }
 
 // run reserves stdout for the caller's structured result. Native Git progress
