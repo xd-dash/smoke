@@ -116,11 +116,10 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	authArgs := gitAuthArgs(opts.Token)
 	fetchTarget := "origin"
 	if opts.Token != "" {
-		// Blacksmith's transparent Git mirror intercepts canonical github.com
-		// transport before ordinary Git configuration is applied. A username-only
-		// transport URL does not match that rewrite, while the scoped extraheader
-		// still carries the token without placing it in argv or the remote config.
-		fetchTarget = "https://x-access-token@github.com/" + opts.Repository + ".git"
+		// Authenticated callers are responsible for selecting a direct Git binary
+		// when their runner wraps Git transport. Keep the canonical GitHub URL here
+		// so the URL-scoped Authorization extraheader matches the request.
+		fetchTarget = origin
 	}
 	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", fetchTarget, opts.SHA)
 	if err := run(ctx, "", git, nil, fetchArgs...); err != nil {
