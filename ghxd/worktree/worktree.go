@@ -114,6 +114,13 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	authArgs := gitAuthArgs(opts.Token)
+	// Authenticated GitHub fetches must not be redirected by ambient runner-level
+	// url.*.insteadOf rules (for example, CI Git mirror proxies). The auth header
+	// below is scoped to https://github.com and would otherwise be lost when Git
+	// rewrites the URL before transport.
+	if opts.Token != "" {
+		authArgs = append([]string{"-c", "url.https://github.com/.insteadOf="}, authArgs...)
+	}
 	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", "origin", opts.SHA)
 	if err := run(ctx, "", git, nil, fetchArgs...); err != nil {
 		return Result{}, err
