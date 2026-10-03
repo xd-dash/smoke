@@ -203,7 +203,13 @@ func gitAuthEnv(token string) []string {
 	if token == "" {
 		return nil
 	}
-	env := append([]string(nil), os.Environ()...)
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "GIT_CONFIG_") {
+			continue
+		}
+		env = append(env, entry)
+	}
 	return append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 }
 
