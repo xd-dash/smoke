@@ -114,14 +114,15 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	authArgs := gitAuthArgs(opts.Token)
-	// Authenticated GitHub fetches must not be redirected by ambient runner-level
-	// url.*.insteadOf rules (for example, CI Git mirror proxies). The auth header
-	// below is scoped to https://github.com and would otherwise be lost when Git
-	// rewrites the URL before transport.
+	fetchTarget := "origin"
 	if opts.Token != "" {
-		authArgs = append([]string{"-c", "url.https://github.com/.insteadOf="}, authArgs...)
+		// Blacksmith's transparent Git mirror intercepts canonical github.com
+		// transport before ordinary Git configuration is applied. A username-only
+		// transport URL does not match that rewrite, while the scoped extraheader
+		// still carries the token without placing it in argv or the remote config.
+		fetchTarget = "https://x-access-token@github.com/" + opts.Repository + ".git"
 	}
-	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", "origin", opts.SHA)
+	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", fetchTarget, opts.SHA)
 	if err := run(ctx, "", git, nil, fetchArgs...); err != nil {
 		return Result{}, err
 	}
@@ -136,7 +137,7 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 	roleRefSHA := ""
 	if opts.RoleRef != "" {
 		refspec := "+refs/heads/" + opts.RoleRef + ":refs/remotes/origin/" + opts.RoleRef
-		roleFetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", "origin", refspec)
+		roleFetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", fetchTarget, refspec)
 		if err := run(ctx, "", git, nil, roleFetchArgs...); err != nil {
 			return Result{}, err
 		}
@@ -211,7 +212,7 @@ func gitAuthArgs(token string) []string {
 		return nil
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	return []string{"-c", "http.https://github.com/.extraheader=AUTHORIZATION: basic " + encoded}
+	return []string{"-c", "http.https://x-access-token@github.com/.extraheader=AUTHORIZATION: basic " + encoded}
 }
 
 // run reserves stdout for the caller's structured result. Native Git progress
