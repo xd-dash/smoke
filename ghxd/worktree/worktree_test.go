@@ -40,3 +40,17 @@ func TestGitAuthArgsDoesNotExposeRawToken(t *testing.T) {
 		t.Fatalf("redacted args still expose authorization header: %q", redacted)
 	}
 }
+
+
+func TestAuthenticatedFetchDisablesAmbientGitHubRewrite(t *testing.T) {
+	token := "secret-token"
+	args := gitAuthArgs(token)
+	args = append([]string{"-c", "url.https://github.com/.insteadOf="}, args...)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "url.https://github.com/.insteadOf=") {
+		t.Fatalf("authenticated fetch does not disable ambient GitHub URL rewriting: %q", joined)
+	}
+	if strings.Contains(joined, token) {
+		t.Fatalf("authenticated fetch args expose raw token: %q", joined)
+	}
+}
