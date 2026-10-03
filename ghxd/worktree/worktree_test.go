@@ -40,3 +40,22 @@ func TestGitAuthArgsDoesNotExposeRawToken(t *testing.T) {
 		t.Fatalf("redacted args still expose authorization header: %q", redacted)
 	}
 }
+
+func TestGitAuthEnvIsolatesAmbientGitConfig(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/tmp/runner-global-gitconfig")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+	env := gitAuthEnv("secret-token")
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GIT_CONFIG_GLOBAL=/dev/null") {
+		t.Fatalf("auth env does not disable global Git config")
+	}
+	if !strings.Contains(joined, "GIT_CONFIG_NOSYSTEM=1") {
+		t.Fatalf("auth env does not disable system Git config")
+	}
+}
+
+func TestGitAuthEnvPreservesAmbientConfigWithoutToken(t *testing.T) {
+	if env := gitAuthEnv(""); env != nil {
+		t.Fatalf("unauthenticated fetch env = %q, want nil", env)
+	}
+}
