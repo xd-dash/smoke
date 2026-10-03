@@ -44,6 +44,9 @@ func TestGitAuthArgsDoesNotExposeRawToken(t *testing.T) {
 func TestGitAuthEnvIsolatesAmbientGitConfig(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/tmp/runner-global-gitconfig")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url.http://mirror.invalid/github.com/.insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/")
 	env := gitAuthEnv("secret-token")
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "GIT_CONFIG_GLOBAL=/dev/null") {
@@ -51,6 +54,9 @@ func TestGitAuthEnvIsolatesAmbientGitConfig(t *testing.T) {
 	}
 	if !strings.Contains(joined, "GIT_CONFIG_NOSYSTEM=1") {
 		t.Fatalf("auth env does not disable system Git config")
+	}
+	if strings.Contains(joined, "GIT_CONFIG_COUNT=1") || strings.Contains(joined, "mirror.invalid") {
+		t.Fatalf("auth env preserves injected Git config: %q", joined)
 	}
 }
 
