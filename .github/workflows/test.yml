@@ -59,7 +59,7 @@ jobs:
           "$smoke" ghxd show | grep -Fx $'environment\tghxd'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-cdn@go'
           "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@main'
-          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/xd-dash/smoke/cmd/github-worktree@bdffac3b4e3da096f4431ecdebc37a154436a24d'
+          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/xd-dash/smoke/cmd/github-worktree@dd0a7471383b4266c0368b089433dac0a4e3b3b5'
 
           "$smoke" ghxd bootstrap
           "$smoke" ghxd bootstrap
