@@ -115,6 +115,38 @@ List the commands present in the current binary with:
 smoke commands
 ```
 
+## Probot composition
+
+Probot is independent GitHub App infrastructure rather than a ghxd preset. It is an optional Smoke command composed through ordinary Go imports:
+
+```sh
+smoke compose add github.com/xd-dash/smoke/cmd/probot
+```
+
+The command imports the Go router package owned by `xd-dash/probot-runtime`; that repository remains authoritative for materializing and launching its Node runtime. Smoke does not duplicate npm or Node module preparation.
+
+Run the router directly when Node is already available:
+
+```sh
+smoke probot run
+smoke probot status
+smoke probot stop
+smoke probot verify restart
+```
+
+Use the resource-aware client surface for local and deployment smoke operations:
+
+```sh
+smoke probot request registration
+smoke probot request delivery <routing-key> <delivery-id> <event> <signature> <json-file|->
+smoke probot request delivery-run [limit]
+smoke probot request reconciliation <routing-key>
+```
+
+`PROBOT_URL` selects the router base URL (default `http://127.0.0.1:3000`), and `PROBOT_RUNTIME_OPERATOR_TOKEN` is used for operator resources. Lifecycle defaults to the direct backend. Set `SMOKE_PROBOT_BACKEND=podman` and `SMOKE_PROBOT_IMAGE=<image>` for an isolated container boundary; Smoke detects `podman` and fails explicitly if it is unavailable. Podman belongs to Smoke orchestration rather than the Probot runtime package. Both backends preserve the same `run`/`status`/`stop` command surface. `smoke probot verify restart` is the restart qualification: it will publish a normally signed fixture delivery, record its opaque Skymill provider delivery identity, destroy the router, start a fresh router, drain the durable delivery, and verify that it cannot be processed again. It is intentionally named for the property being tested rather than the ambiguous `smoke probot smoke`. Runtime state is kept under `SMOKE_PROBOT_STATE_DIR` (or the user cache directory).
+
+`ghxd` remains GitHub repository/tooling infrastructure and no longer installs Probot as a preset.
+
 ## Logmash source grammar
 
 A Redis subscription is one atomic geographic source relationship:

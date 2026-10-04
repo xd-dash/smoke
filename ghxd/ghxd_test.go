@@ -19,4 +19,13 @@ func TestDefaults(t *testing.T) {
 			t.Fatalf("ToolSpecs[%d] = %q, want %q", i, ToolSpecs[i], want[i])
 		}
 	}
+	probot := Presets["probot-runtime"]
+	if len(probot) != 1 || probot[0] != probotRuntimeToolSpec {
+		t.Fatalf("probot preset = %q", probot)
+	}
+	for _, spec := range ToolSpecs {
+		if spec == probotRuntimeToolSpec {
+			t.Fatal("probot-runtime must not be a required ghxd tool")
+		}
+	}
 }

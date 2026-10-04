@@ -2,7 +2,10 @@ module github.com/xd-dash/smoke
 
 go 1.26
 
-require github.com/redis/go-redis/v9 v9.22.0
+require (
+	github.com/redis/go-redis/v9 v9.22.0
+	github.com/xd-dash/probot-runtime v0.0.0-20260921064450-4af1075a969d
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
