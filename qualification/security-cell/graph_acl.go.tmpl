@@ -15,7 +15,7 @@ type graphFixture struct {
  Commands []string `json:"commands"`
 }
 func main() {
- if len(os.Args)!=3 { panic("usage: graph-acl <fatline-scope> <output-json>") }
+ if len(os.Args)!=4 { panic("usage: graph-acl <fatline-scope> <graph-json> <transport-json>") }
  scope,err:=keyspace.ParseScope(os.Args[1]); if err!=nil { panic(err) }
  req,err:=keyspace.CompileRedisRequirements(scope,keyspace.Grant{Capability:keyspace.CapabilityLogmaPubSubGraph,Access:keyspace.AccessRead|keyspace.AccessWrite});if err!=nil {panic(err)}
  if len(req.KeyPatterns)==0 || len(req.ChannelPatterns)!=0 {panic("graph requirements must be key-only")}
@@ -23,5 +23,10 @@ func main() {
  out:=graphFixture{Scope:string(scope),KeyPatterns:req.KeyPatterns,ChannelPatterns:req.ChannelPatterns,Commands:req.Commands}
  b,err:=json.MarshalIndent(out,"","  ");if err!=nil{panic(err)}
  if err=os.WriteFile(os.Args[2],append(b,'\n'),0600);err!=nil{panic(err)}
- fmt.Println("compiled Logma package-owned graph requirements")
+ publisher,err:=keyspace.CompileRedisRequirements(scope,keyspace.Grant{Capability:keyspace.CapabilityLogmaPubSubTransport,Access:keyspace.AccessPublish});if err!=nil{panic(err)}
+ subscriber,err:=keyspace.CompileRedisRequirements(scope,keyspace.Grant{Capability:keyspace.CapabilityLogmaPubSubTransport,Access:keyspace.AccessSubscribe});if err!=nil{panic(err)}
+ transport:=map[string]any{"publisher":publisher,"subscriber":subscriber}
+ tb,err:=json.MarshalIndent(transport,"","  ");if err!=nil{panic(err)}
+ if err=os.WriteFile(os.Args[3],append(tb,'\n'),0600);err!=nil{panic(err)}
+ fmt.Println("compiled Logma package-owned graph and directional transport requirements")
 }
