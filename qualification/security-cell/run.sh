@@ -74,8 +74,8 @@ cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
   GOWORK=off go run -mod=mod ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json" "$artifacts/logma-transport-requirements.json"
 )
 # Compile Skymill key/command requirements in the selected Skymill source,
-# not in Smoke or a Huram-owned duplicate compiler. Go source-local builds
-# ensure this exercises the exact package revision supplied by Huram.
+# not in Smoke or a Huram-owned duplicate compiler. The disposable helper
+# module resolves Skymill against the exact read-only candidate worktree.
 (
   cd "$helpers"
   cat > skymill-qualification.mod <<EOF
