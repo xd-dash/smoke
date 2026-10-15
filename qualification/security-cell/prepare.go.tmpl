@@ -1,0 +1,184 @@
+package main
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/dash-xd/ratelimiter/redisacl/managed"
+	"github.com/xd-dash/logma/fatline"
+	"github.com/xd-dash/prajapati/authz"
+)
+
+type principalSpec struct {
+	Kid       string
+	Principal string
+	Actions   []string
+	Resources []string
+}
+
+type keyConfig struct {
+	Principal string `json:"principal"`
+	Issuer    string `json:"issuer"`
+	PublicKey string `json:"public_key"`
+}
+
+type binding struct {
+	Principal        string       `json:"principal"`
+	AuthProfile      string       `json:"auth_profile"`
+	AuthPolicyDigest string       `json:"auth_policy_digest"`
+	AuthPolicy       authz.Policy `json:"auth_policy"`
+}
+
+type tenant struct {
+	Audiences []string `json:"audiences"`
+	Bindings  []binding `json:"bindings"`
+	Marai     struct {
+		Socket       string `json:"socket"`
+		User         string `json:"user"`
+		PasswordFile string `json:"password_file"`
+	} `json:"marai"`
+}
+
+func writeJSON(path string, value any, mode os.FileMode) {
+	body, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	body = append(body, '\n')
+	if err := os.WriteFile(path, body, mode); err != nil {
+		panic(err)
+	}
+}
+
+func mint(priv ed25519.PrivateKey, kid, audience string) string {
+	now := time.Now()
+	payload, err := json.Marshal(map[string]any{
+		"v": 1,
+		"kid": kid,
+		"aud": audience,
+		"iat": now.Add(-time.Second).Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"nonce": "smoke-fatline-" + kid,
+	})
+	if err != nil {
+		panic(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	signature := ed25519.Sign(priv, []byte("AT1."+encoded))
+	return "AT1." + encoded + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func main() {
+	if len(os.Args) != 3 {
+		panic("usage: prepare <output-dir> <redis-acl-password>")
+	}
+	out := os.Args[1]
+	aclPassword := os.Args[2]
+	if err := os.MkdirAll(out, 0700); err != nil {
+		panic(err)
+	}
+
+	audience := "kms://fatline/world-17"
+	specs := []principalSpec{
+		{Kid: "logma", Principal: "ed25519:logma/world-17", Actions: []string{"kms.decrypt"}, Resources: []string{"kms:key/logma-secret"}},
+		{Kid: "callback", Principal: "ed25519:callback/axiom/world-17", Actions: []string{"kms.encrypt"}, Resources: []string{"kms:key/logma-secret"}},
+		{Kid: "gateway", Principal: "ed25519:gateway/world-17", Actions: []string{"kms.generate-data-key"}, Resources: []string{"kms:key/gateway-key"}},
+	}
+
+	keys := map[string]keyConfig{}
+	tokens := map[string]string{}
+	bindings := make([]binding, 0, len(specs))
+	var logmaPolicyDigest string
+	for _, spec := range specs {
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			panic(err)
+		}
+		keys[spec.Kid] = keyConfig{
+			Principal: spec.Principal,
+			Issuer:    "farcaster/world-17",
+			PublicKey: base64.StdEncoding.EncodeToString(pub),
+		}
+		policy := authz.Policy{
+			Version:       1,
+			Actions:       spec.Actions,
+			Resources:     spec.Resources,
+			Audiences:     []string{audience},
+			RequireExpiry: true,
+		}
+		profile, ok := authz.ProfileFor("capability-v1")
+		if !ok {
+			panic("capability-v1 missing")
+		}
+		if err := policy.Validate(profile); err != nil {
+			panic(err)
+		}
+		digest, err := policy.Digest()
+		if err != nil {
+			panic(err)
+		}
+		if spec.Kid == "logma" {
+			logmaPolicyDigest = digest
+		}
+		bindings = append(bindings, binding{
+			Principal:        spec.Principal,
+			AuthProfile:      "capability-v1",
+			AuthPolicyDigest: digest,
+			AuthPolicy:       policy,
+		})
+		tokens[spec.Kid] = mint(priv, spec.Kid, audience)
+	}
+
+	registryTenant := tenant{Audiences: []string{audience}, Bindings: bindings}
+	registryTenant.Marai.Socket = "/run/marai/redis.sock"
+	registryTenant.Marai.User = "marai-app"
+	registryTenant.Marai.PasswordFile = "/run/marai/app.password"
+	writeJSON(filepath.Join(out, "keys.json"), map[string]any{"keys": keys}, 0600)
+	writeJSON(filepath.Join(out, "registry.json"), map[string]any{"tenants": map[string]tenant{"fatline-world-17": registryTenant}}, 0600)
+	for name, token := range tokens {
+		if err := os.WriteFile(filepath.Join(out, name+".token"), []byte(token), 0600); err != nil {
+			panic(err)
+		}
+	}
+
+	logmaBinding := fatline.Binding{
+		OrgID:            "xd-dash",
+		TenantID:         "world-17",
+		ServiceID:        "logma",
+		AuthProfile:      "capability-v1",
+		AuthPolicyDigest: logmaPolicyDigest,
+		RedisACLProfile:  "publisher",
+		Revision:         1,
+	}
+	bindingDigest, err := logmaBinding.Digest()
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "binding.digest"), []byte(bindingDigest), 0600); err != nil {
+		panic(err)
+	}
+
+	compiler, err := managed.New(managed.Config{
+		AdminUser:      "logma-admin",
+		UsernamePrefix: "logma-tenant-",
+		KeyPrefix:      "logma:tenant:",
+		ChannelPrefix:  "tenant:",
+		FunctionPrefix: "logma_",
+	})
+	if err != nil {
+		panic(err)
+	}
+	execution, err := fatline.CompileRedisExecution(logmaBinding, compiler, "", aclPassword)
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(filepath.Join(out, "redis-execution.json"), execution, 0600)
+
+	fmt.Println(bindingDigest)
+}
