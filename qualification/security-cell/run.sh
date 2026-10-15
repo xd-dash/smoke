@@ -6,16 +6,17 @@ set -euo pipefail
 : "${LOGMA_DIR:?LOGMA_DIR is required}"
 : "${RATELIMITER_DIR:?RATELIMITER_DIR is required}"
 : "${AGNI_DIR:?AGNI_DIR is required}"
+: "${SKYMILL_DIR:?SKYMILL_DIR is required}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="${SMOKE_SECURITY_CELL_WORK:-${RUNNER_TEMP:-/tmp}/smoke-fatline-security-cell}"
 # Caller must supply exact, already-materialized source trees. Smoke does not
 # fetch private sources or own the credential/refresh-token lifecycle.
-for source_dir in "$MARAI_DIR" "$PRAJAPATI_DIR" "$LOGMA_DIR" "$RATELIMITER_DIR" "$AGNI_DIR"; do
+for source_dir in "$MARAI_DIR" "$PRAJAPATI_DIR" "$LOGMA_DIR" "$RATELIMITER_DIR" "$AGNI_DIR" "$SKYMILL_DIR"; do
   [[ -d "$source_dir/.git" || -f "$source_dir/.git" ]] || { echo "missing Git worktree: $source_dir" >&2; exit 1; }
   [[ -z "$(git -C "$source_dir" status --porcelain)" ]] || { echo "dirty source: $source_dir" >&2; exit 1; }
 done
-for spec in "MARAI:$MARAI_DIR" "PRAJAPATI:$PRAJAPATI_DIR" "LOGMA:$LOGMA_DIR" "RATELIMITER:$RATELIMITER_DIR" "AGNI:$AGNI_DIR"; do
+for spec in "MARAI:$MARAI_DIR" "PRAJAPATI:$PRAJAPATI_DIR" "LOGMA:$LOGMA_DIR" "RATELIMITER:$RATELIMITER_DIR" "AGNI:$AGNI_DIR" "SKYMILL:$SKYMILL_DIR"; do
   key="${spec%%:*}"; source_dir="${spec#*:}"; ref_key="${key}_REF"
   expected="${!ref_key:-}"
   [[ "$expected" =~ ^[[:xdigit:]]{40}$ ]] || { echo "missing exact $ref_key" >&2; exit 1; }
@@ -71,6 +72,13 @@ cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
 (
   cd "$helpers"
   go run ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json" "$artifacts/logma-transport-requirements.json"
+)
+# Compile Skymill key/command requirements in the selected Skymill source,
+# not in Smoke or a Huram-owned duplicate compiler. Go source-local builds
+# ensure this exercises the exact package revision supplied by Huram.
+(
+  cd "$SKYMILL_DIR"
+  go run "$script_dir/skymill_requirements.go.tmpl" "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "${FATLINE_SCOPE}:skymill:stream:security-cell" "$artifacts/skymill-requirements.json"
 )
 binding_digest="$(cat "$artifacts/binding.digest")"
 [[ "$binding_digest" == sha256:* ]]
@@ -261,6 +269,27 @@ for role in publisher subscriber; do
     echo "$role unexpectedly mutated graph" >&2; exit 1
   fi
 done
+
+# Skymill owns stream mechanics. Smoke consumes only its materialized ACL.
+skymill_username="smoke-skymill-stream"
+mapfile -t stream_commands < <(jq -r '.Commands[] | "+"+.' "$artifacts/skymill-requirements.json")
+mapfile -t stream_keys < <(jq -r '.KeyPatterns[]' "$artifacts/skymill-requirements.json")
+docker exec "$logma_redis_container" redis-cli ACL SETUSER "$skymill_username" reset on '>smoke-skymill-fixture' -@all "${stream_commands[@]}" "${stream_keys[@]}" | grep -qx OK
+stream_key="$graph_scope:skymill:stream:security-cell"
+docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$skymill_username" XADD "$stream_key" '*' payload probe | grep -qx OK
+for foreign_stream in "foreign-scope:skymill:stream:security-cell" "$graph_scope:skymill:stream:other"; do
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$skymill_username" XADD "$foreign_stream" '*' payload probe | grep -qx OK; then
+    echo "Skymill principal escaped stream identity: $foreign_stream" >&2; exit 1
+  fi
+done
+for operation in PUBLISH SUBSCRIBE; do
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$skymill_username" "$operation" "$graph_scope:logma:transport:channel:probe" payload | grep -qx OK; then
+    echo "Skymill principal gained Logma transport authority" >&2; exit 1
+  fi
+done
+if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$skymill_username" HSET "$graph_scope:logma:pubsub:channel:probe" name probe | grep -qx OK; then
+  echo "Skymill principal gained Logma graph mutation authority" >&2; exit 1
+fi
 
 # Direct application Redis identity cannot own Marai lifecycle.
 denied="$(agni app KMS.QUIESCE 2>&1 || true)"
