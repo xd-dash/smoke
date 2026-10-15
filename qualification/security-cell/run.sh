@@ -70,7 +70,7 @@ cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
 # provider contract is qualified.
 (
   cd "$helpers"
-  go run ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json"
+  go run ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json" "$artifacts/logma-transport-requirements.json"
 )
 binding_digest="$(cat "$artifacts/binding.digest")"
 [[ "$binding_digest" == sha256:* ]]
@@ -238,6 +238,29 @@ done
 if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$graph_username" ACL LIST | grep -qx OK; then
   echo "graph identity unexpectedly allowed ACL administration" >&2; exit 1
 fi
+
+# Directional transport principals are compiled by Logma's provider, not Smoke.
+# Graph keys and unrelated channel families must remain inaccessible.
+for role in publisher subscriber; do
+  username="smoke-logma-$role"
+  mapfile -t commands < <(jq -r --arg role "$role" '.[$role].Commands[] | "+"+.' "$artifacts/logma-transport-requirements.json")
+  mapfile -t channels < <(jq -r --arg role "$role" '.[$role].ChannelPatterns[]' "$artifacts/logma-transport-requirements.json")
+  [[ "${#channels[@]}" -gt 0 ]] || { echo "empty transport channel authority" >&2; exit 1; }
+  docker exec "$logma_redis_container" redis-cli ACL SETUSER "$username" reset on '>smoke-transport-fixture' -@all "${commands[@]}" "${channels[@]}" | grep -qx OK
+  topic="$graph_scope:logma:transport:channel:probe"
+  allowed=PUBLISH; denied=SUBSCRIBE
+  if [[ "$role" == subscriber ]]; then allowed=SUBSCRIBE; denied=PUBLISH; fi
+  docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$username" "$allowed" "$topic" payload | grep -qx OK
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$username" "$denied" "$topic" payload | grep -qx OK; then
+    echo "$role unexpectedly allowed $denied" >&2; exit 1
+  fi
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$username" "$allowed" "foreign-scope:logma:transport:channel:probe" payload | grep -qx OK; then
+    echo "$role escaped scope" >&2; exit 1
+  fi
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$username" HSET "$graph_scope:logma:pubsub:channel:probe" name probe | grep -qx OK; then
+    echo "$role unexpectedly mutated graph" >&2; exit 1
+  fi
+done
 
 # Direct application Redis identity cannot own Marai lifecycle.
 denied="$(agni app KMS.QUIESCE 2>&1 || true)"
