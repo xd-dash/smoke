@@ -64,14 +64,14 @@ cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
 
 (
   cd "$helpers"
-  go run ./prepare.go "$artifacts" "$acl_password" >"$artifacts/prepare.out"
+  GOWORK=off go run -mod=mod ./prepare.go "$artifacts" "$acl_password" >"$artifacts/prepare.out"
 )
 # Compile graph authority using Logma's provider code, never an ad-hoc ACL list.
 # Keep this independent of the legacy publisher fixture until the transport
 # provider contract is qualified.
 (
   cd "$helpers"
-  go run ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json" "$artifacts/logma-transport-requirements.json"
+  GOWORK=off go run -mod=mod ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json" "$artifacts/logma-transport-requirements.json"
 )
 # Compile Skymill key/command requirements in the selected Skymill source,
 # not in Smoke or a Huram-owned duplicate compiler. Go source-local builds
