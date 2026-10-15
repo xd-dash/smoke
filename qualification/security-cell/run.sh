@@ -59,10 +59,18 @@ replace github.com/xd-dash/prajapati => $PRAJAPATI_DIR
 EOF
 cp "$script_dir/prepare.go.tmpl" "$helpers/prepare.go"
 cp "$script_dir/resolve.go.tmpl" "$helpers/resolve.go"
+cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
 
 (
   cd "$helpers"
   go run ./prepare.go "$artifacts" "$acl_password" >"$artifacts/prepare.out"
+)
+# Compile graph authority using Logma's provider code, never an ad-hoc ACL list.
+# Keep this independent of the legacy publisher fixture until the transport
+# provider contract is qualified.
+(
+  cd "$helpers"
+  go run ./graph_acl.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "$artifacts/logma-graph-requirements.json"
 )
 binding_digest="$(cat "$artifacts/binding.digest")"
 [[ "$binding_digest" == sha256:* ]]
@@ -207,6 +215,28 @@ fi
 if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$redis_username" ACL LIST 2>&1 | grep -qx OK; then
   echo "publisher Redis identity unexpectedly allowed ACL administration" >&2
   exit 1
+fi
+
+# Apply the separately compiled Logma v2 graph identity. Graph authority must
+# never imply Pub/Sub transport, adjacent runtime state, or another scope.
+graph_username="smoke-logma-graph"
+mapfile -t graph_rules < <(jq -r '.commands[] | "+"+.' "$artifacts/logma-graph-requirements.json")
+mapfile -t graph_keys < <(jq -r '.key_patterns[]' "$artifacts/logma-graph-requirements.json")
+docker exec "$logma_redis_container" redis-cli ACL SETUSER "$graph_username" reset on '>smoke-graph-fixture' -@all "${graph_rules[@]}" "${graph_keys[@]}" | grep -qx OK
+graph_scope="$(jq -er '.scope' "$artifacts/logma-graph-requirements.json")"
+docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$graph_username" HSET "$graph_scope:logma:pubsub:channel:probe" name probe | grep -qx OK
+for denied_key in "$graph_scope:logma:runtime:activation:probe" "foreign-scope:logma:pubsub:channel:probe"; do
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$graph_username" HSET "$denied_key" name probe | grep -qx OK; then
+    echo "graph identity escaped key scope: $denied_key" >&2; exit 1
+  fi
+done
+for transport_op in PUBLISH SUBSCRIBE; do
+  if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$graph_username" "$transport_op" "$graph_scope:logma:lifecycle:probe" payload | grep -qx OK; then
+    echo "graph identity unexpectedly allowed $transport_op" >&2; exit 1
+  fi
+done
+if docker exec "$logma_redis_container" redis-cli ACL DRYRUN "$graph_username" ACL LIST | grep -qx OK; then
+  echo "graph identity unexpectedly allowed ACL administration" >&2; exit 1
 fi
 
 # Direct application Redis identity cannot own Marai lifecycle.
