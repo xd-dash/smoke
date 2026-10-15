@@ -77,10 +77,17 @@ cp "$script_dir/graph_acl.go.tmpl" "$helpers/graph_acl.go"
 # not in Smoke or a Huram-owned duplicate compiler. Go source-local builds
 # ensure this exercises the exact package revision supplied by Huram.
 (
-  cd "$SKYMILL_DIR"
-  cp "$script_dir/skymill_requirements.go.tmpl" ./smoke_security_cell_requirements.go
-  trap 'rm -f ./smoke_security_cell_requirements.go' EXIT
-  go run ./smoke_security_cell_requirements.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "${FATLINE_SCOPE}:skymill:stream:security-cell" "$artifacts/skymill-requirements.json"
+  cd "$helpers"
+  cat > skymill-qualification.mod <<EOF
+module smoke-skymill-qualification
+
+go 1.26
+
+require github.com/xd-dash/skymill v0.0.0
+replace github.com/xd-dash/skymill => $SKYMILL_DIR
+EOF
+  cp "$script_dir/skymill_requirements.go.tmpl" ./skymill_requirements.go
+  GOWORK=off go run -mod=mod -modfile=skymill-qualification.mod ./skymill_requirements.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "${FATLINE_SCOPE}:skymill:stream:security-cell" "$artifacts/skymill-requirements.json"
 )
 binding_digest="$(cat "$artifacts/binding.digest")"
 [[ "$binding_digest" == sha256:* ]]
