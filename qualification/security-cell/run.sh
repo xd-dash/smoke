@@ -12,7 +12,15 @@ work="${SMOKE_SECURITY_CELL_WORK:-${RUNNER_TEMP:-/tmp}/smoke-fatline-security-ce
 # Caller must supply exact, already-materialized source trees. Smoke does not
 # fetch private sources or own the credential/refresh-token lifecycle.
 for source_dir in "$MARAI_DIR" "$PRAJAPATI_DIR" "$LOGMA_DIR" "$RATELIMITER_DIR" "$AGNI_DIR"; do
-  [[ -f "$source_dir/go.mod" || -f "$source_dir/AGNI_IDIOMS.md" ]] || { echo "missing materialized source: $source_dir" >&2; exit 1; }
+  [[ -d "$source_dir/.git" || -f "$source_dir/.git" ]] || { echo "missing Git worktree: $source_dir" >&2; exit 1; }
+  [[ -z "$(git -C "$source_dir" status --porcelain)" ]] || { echo "dirty source: $source_dir" >&2; exit 1; }
+done
+for spec in "MARAI:$MARAI_DIR" "PRAJAPATI:$PRAJAPATI_DIR" "LOGMA:$LOGMA_DIR" "RATELIMITER:$RATELIMITER_DIR" "AGNI:$AGNI_DIR"; do
+  key="${spec%%:*}"; source_dir="${spec#*:}"; ref_key="${key}_REF"
+  expected="${!ref_key:-}"
+  [[ "$expected" =~ ^[[:xdigit:]]{40}$ ]] || { echo "missing exact $ref_key" >&2; exit 1; }
+  actual="$(git -C "$source_dir" rev-parse HEAD)"
+  [[ "$actual" == "$expected" ]] || { echo "$key SHA mismatch: $actual != $expected" >&2; exit 1; }
 done
 artifacts="$work/artifacts"
 helpers="$work/helpers"
