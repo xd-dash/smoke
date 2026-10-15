@@ -1,0 +1,27 @@
+package main
+
+import (
+ "encoding/json"
+ "fmt"
+ "os"
+ "strings"
+ "github.com/xd-dash/logma/serverless/keyspace"
+)
+
+type graphFixture struct {
+ Scope string `json:"scope"`
+ KeyPatterns []string `json:"key_patterns"`
+ ChannelPatterns []string `json:"channel_patterns"`
+ Commands []string `json:"commands"`
+}
+func main() {
+ if len(os.Args)!=3 { panic("usage: graph-acl <fatline-scope> <output-json>") }
+ scope,err:=keyspace.ParseScope(os.Args[1]); if err!=nil { panic(err) }
+ req,err:=keyspace.CompileRedisRequirements(scope,keyspace.Grant{Capability:keyspace.CapabilityLogmaPubSubGraph,Access:keyspace.AccessRead|keyspace.AccessWrite});if err!=nil {panic(err)}
+ if len(req.KeyPatterns)==0 || len(req.ChannelPatterns)!=0 {panic("graph requirements must be key-only")}
+ for _,command:=range req.Commands {if strings.EqualFold(command,"publish")||strings.EqualFold(command,"subscribe")||strings.EqualFold(command,"acl"){panic("graph requirement grants transport or admin")}}
+ out:=graphFixture{Scope:string(scope),KeyPatterns:req.KeyPatterns,ChannelPatterns:req.ChannelPatterns,Commands:req.Commands}
+ b,err:=json.MarshalIndent(out,"","  ");if err!=nil{panic(err)}
+ if err=os.WriteFile(os.Args[2],append(b,'\n'),0600);err!=nil{panic(err)}
+ fmt.Println("compiled Logma package-owned graph requirements")
+}
