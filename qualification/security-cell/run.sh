@@ -87,7 +87,6 @@ require github.com/xd-dash/skymill v0.0.0
 replace github.com/xd-dash/skymill => $SKYMILL_DIR
 EOF
   cp "$script_dir/skymill_requirements.go.tmpl" ./skymill_requirements.go
-  GOWORK=off go mod tidy -modfile=skymill-qualification.mod >/dev/null
   GOWORK=off go run -mod=mod -modfile=skymill-qualification.mod ./skymill_requirements.go "${FATLINE_SCOPE:?FATLINE_SCOPE is required}" "${FATLINE_SCOPE}:skymill:stream:security-cell" "$artifacts/skymill-requirements.json"
 )
 binding_digest="$(cat "$artifacts/binding.digest")"
