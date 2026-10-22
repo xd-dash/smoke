@@ -46,4 +46,4 @@ Smoke core defines the general contract and may expose pure parsing/validation a
 
 ## Current implementation status
 
-This document specifies the desired convention; it does **not** assert that Smoke implements publication, CAS, immutable-tag enforcement, qualification authorization, revocation, or deployment. Those capabilities require owning-workflow reconciliation and tests before use.
+Smoke now provides a backend-neutral Publisher, Grant/Verifier and Store contract, with tests for denied publication, immutable conflicts, idempotence, CAS failures and concurrent publications. These interfaces do not constitute a durable backend, an external authorization verifier, a qualified composition, an OCI/Podman adapter, revocation enforcement, or activation. Concrete adapters must atomically enforce the specified invariants; owning-workflow reconciliation and integration qualification remain outstanding.
