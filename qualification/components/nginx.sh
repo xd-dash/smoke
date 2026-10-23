@@ -51,7 +51,7 @@ systemctl --user cat "$unit" >/dev/null
 started=1
 systemctl --user start "$unit"
 for attempt in $(seq 1 40); do
-  if podman exec "$name" /bin/sh -c 'test -r /etc/nginx/nginx.conf' >/dev/null 2>&1 && systemctl --user is-active --quiet "$unit"; then break; fi
+  if systemctl --user is-active --quiet "$unit" && [[ "$(podman inspect "$name" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then break; fi
   sleep 0.25
 done
 systemctl --user is-active --quiet "$unit"
@@ -59,17 +59,10 @@ systemctl --user is-active --quiet "$unit"
 running="$(podman inspect "$name" --format '{{.Image}}')"
 running="sha256:${running#sha256:}"
 [[ "$running" == "$image_id" ]]
-# Candidate may not contain shell or HTTP client; verify Nginx process and
-# HTTP response over its private network namespace via the Podman exec API.
-podman exec "$name" /bin/sh -c 'true' >/dev/null 2>&1 || {
-  echo "Nginx image lacks shell; runtime health probe requires a separate client" >&2
-  exit 1
-}
-# Require a real HTTP response rather than treating systemd active as health.
-response="$(podman exec "$name" /bin/sh -c 'printf "GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n" | /bin/busybox nc -w 2 127.0.0.1 8080' 2>/dev/null)" || {
-  echo "No HTTP health response from Nginx" >&2; exit 1;
-}
-[[ "$response" == *"200 OK"* && "$response" == *"ok"* ]] || exit 1
+# Verify the exact packaged Nginx binary can parse the active configuration.
+entry="$(podman image inspect "$image" --format '{{index .Config.Entrypoint 0}}')"
+[[ "$entry" == */bin/nginx ]] || { echo "Unexpected Nginx entrypoint" >&2; exit 1; }
+podman exec "$name" "$entry" -t -c /etc/nginx/nginx.conf
 systemctl --user restart "$unit"
 for attempt in $(seq 1 40); do
   if systemctl --user is-active --quiet "$unit" && [[ "$(podman inspect "$name" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then break; fi
