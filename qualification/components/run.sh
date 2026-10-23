@@ -16,6 +16,9 @@ case "$component" in redis|logma|skymill|nginx) ;; *) echo "unsupported componen
 [[ -d "$agni/.git" ]] || { echo "Agni checkout required" >&2; exit 2; }
 [[ -n "$builder" ]] || { echo "Nix-Alpine builder required" >&2; exit 2; }
 [[ "$(podman info --format '{{.Host.Security.Rootless}}')" == true ]] || { echo "rootless Podman required" >&2; exit 1; }
+if [[ "$component" == nginx ]]; then
+  exec bash "$(dirname "$0")/nginx.sh" --agni "$agni" --builder "$builder" --image "${image:-localhost/fatline-nginx:candidate}" --evidence "$evidence"
+fi
 if [[ "$component" != redis ]]; then
   echo "Smoke $component runtime probe not implemented" >&2; exit 1
 fi
