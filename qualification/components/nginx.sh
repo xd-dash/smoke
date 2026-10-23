@@ -33,11 +33,11 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$quadlet_dir" "$config_dir"
-chmod 700 "$config_dir"
+chmod 755 "$config_dir"
 out="$(podman exec "$builder" nix build --no-write-lock-file --no-link --print-out-paths /workspaces/agni/local/fatline#nginx-qualification)"
 podman cp "$builder:$out/quadlets/fatline-qualify-nginx.container" "$work/template.container"
 podman cp "$builder:$out/config/nginx.conf" "$config_dir/nginx.conf"
-chmod 600 "$config_dir/nginx.conf"
+chmod 644 "$config_dir/nginx.conf"
 sed -e "s|__CANDIDATE_IMAGE_ID__|$image_id|g" \
     -e "s|fatline-qualify-nginx|$name|g" \
     -e "s|fatline-qualify/nginx|fatline-qualify/$scope|g" \
