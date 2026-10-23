@@ -69,7 +69,9 @@ for attempt in $(seq 1 40); do
   sleep 0.25
 done
 systemctl --user is-active --quiet "$unit"
-[[ "$(podman inspect "$name" --format '{{.Image}}')" == "$image_id" ]]
+restarted_image="$(podman inspect "$name" --format '{{.Image}}')"
+restarted_image="sha256:${restarted_image#sha256:}"
+[[ "$restarted_image" == "$image_id" ]] || { echo "Restarted container image identity mismatch: $restarted_image != $image_id" >&2; exit 1; }
 if [[ -n "$evidence" ]]; then
   mkdir -p "$(dirname "$evidence")"
   jq -cn --arg image_id "$image_id" --arg unit "$unit" --arg container "$name" \
