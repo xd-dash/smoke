@@ -184,3 +184,27 @@ func writeEncryptedToken(ctx context.Context, keyFile, output string, token acce
 	}
 	return os.Rename(f.Name(), output)
 }
+
+func checkEncryptedCredential(ctx context.Context) error {
+	output := strings.TrimSpace(os.Getenv("GHXD_SOPS_FILE"))
+	if output == "" {
+		output = "/workspaces/.private/sops/ghxd.enc.json"
+	}
+	if strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE")) == "" {
+		return errors.New("SOPS_AGE_KEY_FILE is required")
+	}
+	cmd := exec.CommandContext(ctx, "sops", "decrypt", "--input-type", "json", "--output-type", "json", output)
+	data, err := cmd.Output()
+	if err != nil {
+		return errors.New("encrypted GitHub credential unavailable or cannot be decrypted")
+	}
+	var token accessToken
+	if err := json.Unmarshal(data, &token); err != nil {
+		return errors.New("decrypted GitHub credential is not valid JSON")
+	}
+	if token.AccessToken == "" {
+		return errors.New("decrypted GitHub credential has no access token")
+	}
+	fmt.Printf("GHXD_CREDENTIAL=READABLE refresh_token_present=%t scope=%s\n", token.RefreshToken != "", token.Scope)
+	return nil
+}
