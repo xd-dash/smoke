@@ -66,8 +66,8 @@ use a different identity/volume if a scope must not decrypt secrets.
 ## GitHub user device authentication
 
 ```
-smoke ghxd auth
-smoke ghxd status
+smoke ghxd-secrets auth
+smoke ghxd-secrets status
 ```
 
 The first command requests a GitHub device code, accepts interactive user
