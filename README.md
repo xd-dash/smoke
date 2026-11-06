@@ -320,3 +320,16 @@ local smoke composition main.go
 Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
 
 `xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash owns subscription and callback supervision; Smoke only owns composition plus the small unattended-runtime start/list/stop boundary.
+
+## ARM Nix-Alpine workspace
+
+Smoke can be mounted as a writable Git checkout in a generic Nix-Alpine runner,
+with a separate shared artifact directory and an isolated persistent Nix store.
+The runner supplies the pinned Go toolchain; Smoke owns its refresh, tests,
+Go workspace and self-composition. No application-specific module graph is
+required in Nix-Alpine.
+
+The source-safe refresh/test entry point is `bash tools/nix-alpine.sh refresh-test`
+when invoked inside the Nix-Alpine `#go` development shell.
+See [ARM shared workspace and store closure exchange](docs/nix-alpine-arm-workspace.md)
+for the two-container writer/reader layout and lifecycle constraints.
