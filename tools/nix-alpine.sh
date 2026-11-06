@@ -19,7 +19,7 @@ smoke_state() {
       return 2
     fi
   fi
-  printf '%s\\n' "$state"
+  printf '%s\n' "$state"
 }
 
 require_go() {
