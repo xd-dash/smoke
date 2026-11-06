@@ -63,6 +63,12 @@ case "$action" in
     require_go
     state="$(smoke_state)"
     mkdir -p "$state/bin"
+    if [[ ! -e "$state/composition.json" ]]; then
+      (umask 077; printf '{"components":[]}\n' > "$state/composition.json")
+    elif grep -Fq 'github.com/xd-dash/smoke/cmd/logmash' "$state/composition.json"; then
+      echo "Minimal ghxd branch refuses existing Logmash composition; select a separate SMOKE_STATE_DIR" >&2
+      exit 2
+    fi
     staged="$(mktemp "$state/bin/.smoke-new-XXXXXXXX")"
     trap 'rm -f "$staged"' EXIT
     GOWORK=off CGO_ENABLED=0 go build -o "$staged" ./cmd/ghxd-minimal
