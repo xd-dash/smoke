@@ -1,6 +1,10 @@
 package selfbuild
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"go/parser"
 	"go/token"
 	"strings"
@@ -70,5 +74,29 @@ func TestRenderGoModPinsRequestedSmokeVersion(t *testing.T) {
 	mod := renderGoMod()
 	if !strings.Contains(mod, "require github.com/xd-dash/smoke v1.2.3") {
 		t.Fatalf("go.mod = %q", mod)
+	}
+}
+
+func TestEnsureGoModUsesMountedLocalSmokeSource(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("Go toolchain unavailable")
+	}
+	local := t.TempDir()
+	if err := os.WriteFile(filepath.Join(local, "go.mod"), []byte("module github.com/xd-dash/smoke\\n\\ngo 1.26\\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SMOKE_LOCAL_SOURCE", local)
+	t.Setenv("SMOKE_MODULE_VERSION", "")
+	composition := t.TempDir()
+	if err := ensureGoMod(context.Background(), composition, goBin); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(composition, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "replace github.com/xd-dash/smoke => "+local) {
+		t.Fatalf("composition did not select local Smoke source: %s", data)
 	}
 }
