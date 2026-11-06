@@ -18,6 +18,7 @@ jobs:
           cache: true
       - name: Check Smoke-owned Nix-Alpine workflow syntax
         run: bash -n tools/nix-alpine.sh
+      - run: go build ./cmd/ghxd-minimal
       - run: go vet ./...
       - run: go test -race ./...
       - name: Verify Go-native module workspace composition
