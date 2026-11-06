@@ -8,9 +8,12 @@ import (
 	"syscall"
 
 	"github.com/xd-dash/smoke/smokeapp"
+ "github.com/xd-dash/smoke/identity"
+ _ "github.com/xd-dash/smoke/cmd/secrets"
 )
 
 func main() {
+ identity.SetComponents("github.com/xd-dash/smoke/cmd/secrets")
 	if len(os.Args) >= 3 && os.Args[1] == "ghxd" {
 		switch os.Args[2] {
 		case "auth":
