@@ -3,7 +3,6 @@
 package secretscmd
 
 import (
- "context"
  "encoding/json"
  "io"
  "errors"
@@ -85,5 +84,3 @@ func replaceProcess(args []string, env []string) error {
  return syscall.Exec(binary,args,env)
 }
 
-// Reserved for the optional native-command runtime context in future releases.
-var _ = context.Background
