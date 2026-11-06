@@ -101,13 +101,17 @@ func DecryptJSON(encrypted []byte, identityPath string) ([]byte, error) {
 func SaveExclusive(path string, ciphertext []byte) error {
  dir := filepath.Dir(path)
  if err := os.MkdirAll(dir, 0700); err != nil { return err }
- f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+ tmp, err := os.CreateTemp(dir, ".sops-ciphertext-*")
  if err != nil { return err }
- ok := false
- defer func(){ _ = f.Close(); if !ok { _ = os.Remove(path) } }()
- if _, err := f.Write(ciphertext); err != nil { return err }
- if err := f.Sync(); err != nil { return err }
- ok = true
+ defer os.Remove(tmp.Name())
+ if err := tmp.Chmod(0600); err != nil { _ = tmp.Close(); return err }
+ if _, err := tmp.Write(ciphertext); err != nil { _ = tmp.Close(); return err }
+ if err := tmp.Sync(); err != nil { _ = tmp.Close(); return err }
+ if err := tmp.Close(); err != nil { return err }
+ // POSIX link is atomic and fails with EEXIST. Rename alone could silently
+ // overwrite credentials created by a concurrent device-flow approval.
+ if err := os.Link(tmp.Name(), path); err != nil { return err }
+ if d, err := os.Open(dir); err == nil { _ = d.Sync(); _ = d.Close() }
  return nil
 }
 
