@@ -312,6 +312,18 @@ func ensureGoMod(ctx context.Context, sourceDir, goBin string) error {
 			return err
 		}
 	}
+	if localSource := strings.TrimSpace(os.Getenv("SMOKE_LOCAL_SOURCE")); localSource != "" {
+		localSource, err := filepath.Abs(localSource)
+		if err != nil {
+			return fmt.Errorf("resolve local Smoke source: %w", err)
+		}
+		if _, err := os.Stat(filepath.Join(localSource, "go.mod")); err != nil {
+			return fmt.Errorf("local Smoke source has no go.mod: %w", err)
+		}
+		if err := runGo(ctx, sourceDir, goBin, "mod", "edit", "-replace=github.com/xd-dash/smoke="+localSource); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
