@@ -1,5 +1,36 @@
 # Smoke in ARM Nix-Alpine
 
+## Preferred macOS provider: rootless Podman Machine
+
+The canonical host adapter is now `xd-dash/nix.xd` branch
+`codex/podman-unified-bootstrap`. It delegates to the upstream
+`dash-xd/nix-alpine/local/bootstrap.sh` Quadlet, so `/workspaces` is
+read-write with `UserNS=keep-id:uid=1000,gid=1000`, and `/nix` is
+a scoped single-owner named volume.
+
+Clone Smoke into `nix.xd/compositions/smoke`; it then appears directly at
+`/workspaces/compositions/smoke` inside the runner. Smoke's
+`tools/nix-alpine.sh` uses `/workspaces/.smoke-state` for its persistent
+binary, composition state, and Go workspace environment. No dedicated
+`/smoke` or `/exchange` mounts are needed for the normal Podman path.
+
+```sh
+nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
+  bash /workspaces/compositions/smoke/tools/nix-alpine.sh refresh-test
+nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
+  bash /workspaces/compositions/smoke/tools/nix-alpine.sh build
+```
+
+The older Apple Container producer/reader design below is retained only
+for migration reference. A second Podman container can mount the same
+workspace, but until its source mount is explicitly read-only, it must not
+mutate Smoke's canonical workspace or composition concurrently. Nix store
+outputs are transferred between scoped stores through
+`/workspaces/.cache/nix`, not through a shared writable `/nix`.
+
+---
+
+
 The host owns the container lifecycle. Nix-Alpine supplies a persistent Linux
 Nix store and a Go toolchain. Smoke owns its Git refresh, Go workspace,
 composition, test selection, and runtime identity. No Nix-Alpine Makefile
