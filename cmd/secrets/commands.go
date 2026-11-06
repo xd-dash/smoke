@@ -5,6 +5,7 @@ package secretscmd
 import (
  "context"
  "encoding/json"
+ "io"
  "errors"
  "fmt"
  "os"
@@ -19,10 +20,28 @@ import (
 func init() { command.Register("secrets", Run) }
 
 func Run(args []string) error {
- if len(args) < 2 { return errors.New("usage: smoke secrets <inspect|exec-env|exec-file> <encrypted.json> [-- command args...]") }
+ if len(args) < 2 { return errors.New("usage: smoke secrets <seal-json|verify-json|inspect|exec-env|exec-file> <file> [-- command args...]") }
  path := args[1]
  if err := secrets.ValidateSecretPath(path); err != nil { return err }
  switch args[0] {
+ case "seal-json":
+  if len(args) != 2 { return errors.New("usage: smoke secrets seal-json <output.enc.json>") }
+  plaintext, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+  if err != nil { return errors.New("cannot read JSON input") }
+  encrypted, err := secrets.EncryptJSON(plaintext, os.Getenv("SOPS_AGE_KEY_FILE"))
+  clear(plaintext)
+  if err != nil { return errors.New("cannot encrypt SOPS document") }
+  if err := secrets.SaveExclusive(path, encrypted); err != nil { return err }
+  fmt.Printf("SOPS_SEALED=PASS sha256=%s\n",secrets.DigestCiphertext(encrypted))
+  return nil
+ case "verify-json":
+  if len(args) != 2 { return errors.New("usage: smoke secrets verify-json <encrypted.json>") }
+  raw,err:=os.ReadFile(path); if err != nil { return err }
+  plain,err:=secrets.DecryptJSON(raw,os.Getenv("SOPS_AGE_KEY_FILE"))
+  if err != nil {return errors.New("SOPS verification failed")}
+  clear(plain)
+  fmt.Println("SOPS_VERIFIED=PASS")
+  return nil
  case "inspect":
   if len(args) != 2 { return errors.New("usage: smoke secrets inspect <encrypted.json>") }
   raw, err := os.ReadFile(path)
