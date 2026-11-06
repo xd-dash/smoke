@@ -7,39 +7,35 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/xd-dash/smoke/ghxd"
 	"github.com/xd-dash/smoke/smokeapp"
 )
 
 func main() {
-	if len(os.Args) >= 2 && os.Args[1] == "ghxd" {
-		if len(os.Args) == 3 && os.Args[2] == "status" {
-            if err := checkEncryptedCredential(context.Background()); err != nil {
-                fmt.Fprintln(os.Stderr, "ghxd status:", err)
-                os.Exit(1)
-            }
-            return
-        }
-        if len(os.Args) == 3 && os.Args[2] == "auth" {
-            if err := bootstrapGitHubToken(context.Background()); err != nil {
-                fmt.Fprintln(os.Stderr, "ghxd auth:", err)
-                os.Exit(1)
-            }
-            return
-        }
-        if len(os.Args) != 3 || os.Args[2] != "bootstrap" {
-			fmt.Fprintln(os.Stderr, "usage: smoke ghxd <bootstrap|auth|status>")
-			os.Exit(2)
+	if len(os.Args) >= 3 && os.Args[1] == "ghxd" {
+		switch os.Args[2] {
+		case "auth":
+			if len(os.Args) != 3 {
+				fmt.Fprintln(os.Stderr, "use `smoke ghxd auth`; raw token/device-code subcommands are disabled")
+				os.Exit(2)
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if err := bootstrapGitHubToken(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "ghxd auth:", err)
+				os.Exit(1)
+			}
+			return
+		case "status":
+			if len(os.Args) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: smoke ghxd status")
+				os.Exit(2)
+			}
+			if err := checkEncryptedCredential(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, "ghxd status:", err)
+				os.Exit(1)
+			}
+			return
 		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		env, err := ghxd.Bootstrap(ctx, "")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "ghxd bootstrap:", err)
-			os.Exit(1)
-		}
-		fmt.Printf("ghxd environment: %s\n", env.Name)
-		return
 	}
 	smokeapp.Main(os.Args[1:])
 }
