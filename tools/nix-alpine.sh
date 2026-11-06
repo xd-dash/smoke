@@ -44,13 +44,39 @@ case "$action" in
     export GOWORK=off CGO_ENABLED=0
     go vet ./...
     ;;
+  build)
+    require_go
+    [[ -d /exchange && -w /exchange ]] || {
+      echo "Writable /exchange required to install the shared Smoke binary" >&2
+      exit 2
+    }
+    state="${SMOKE_STATE_DIR:-/exchange/smoke-state}"
+    mkdir -p "$state/bin"
+    staged="$(mktemp "$state/bin/.smoke-new-XXXXXXXX")"
+    trap 'rm -f "$staged"' EXIT
+    GOWORK=off CGO_ENABLED=0 go build -o "$staged" ./cmd/smoke
+    chmod 0755 "$staged"
+    mv -f "$staged" "$state/bin/smoke"
+    trap - EXIT
+    printf 'Installed Smoke binary at %s (source %s)\n' "$state/bin/smoke" "$(git rev-parse HEAD)"
+    ;;
   inspect|commands|compose|env)
     require_go
+    state="${SMOKE_STATE_DIR:-/exchange/smoke-state}"
+    binary="$state/bin/smoke"
+    [[ -x "$binary" ]] || {
+      echo "No installed Smoke binary; run tools/nix-alpine.sh build first" >&2
+      exit 2
+    }
+    export SMOKE_ENV_DIR="${SMOKE_ENV_DIR:-$state/envs}"
+    export SMOKE_COMPOSITION_MANIFEST="${SMOKE_COMPOSITION_MANIFEST:-$state/composition.json}"
+    export SMOKE_COMPOSITION_DIR="${SMOKE_COMPOSITION_DIR:-$state/composition}"
+    export SMOKE_LOCAL_SOURCE="${SMOKE_LOCAL_SOURCE:-$root}"
     export GOWORK=off CGO_ENABLED=0
-    exec go run ./cmd/smoke "$action" "$@"
+    exec "$binary" "$action" "$@"
     ;;
   *)
-    echo "Usage: tools/nix-alpine.sh {refresh|refresh-test|test|vet|inspect|commands|compose|env}" >&2
+    echo "Usage: tools/nix-alpine.sh {refresh|refresh-test|test|vet|build|inspect|commands|compose|env}" >&2
     exit 2
     ;;
 esac
