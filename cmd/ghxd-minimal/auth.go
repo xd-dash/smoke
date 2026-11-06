@@ -116,9 +116,9 @@ func bootstrapGitHubToken(ctx context.Context) error {
 			device.Interval += 5
 			continue
 		case "":
-			if token.AccessToken == "" {
-				return errors.New("GitHub returned neither a token nor a device-flow status")
-			}
+			if token.AccessToken == "" || token.RefreshToken == "" {
+                return errors.New("GitHub did not return both access and refresh tokens; enable expiring user tokens before authorization")
+            }
 			if err := writeEncryptedToken(ctx, keyFile, output, token); err != nil {
 				return err
 			}
