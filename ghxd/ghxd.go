@@ -27,8 +27,8 @@ const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@dd
 // exact qualified commit so an older Smoke binary cannot silently bootstrap a
 // newer seeding implementation from a movable ref.
 var ToolSpecs = []string{
-	"github.com/dash-xd/github-cdn@go",
-	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@main",
+	"github.com/dash-xd/github-cdn@6c00e9533d91906c97da7ebfb262104466da27ed",
+	"github.com/dash-xd/github-device-auth/cmd/github-device-auth@113339509308abf42efce2e0305f67c65f6910be",
 	defaultWorktreeToolSpec,
 }
 
