@@ -39,6 +39,9 @@ nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
   bash /smoke/tools/nix-alpine.sh vet
 
 nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
+  bash /smoke/tools/nix-alpine.sh build
+
+nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
   bash /smoke/tools/nix-alpine.sh commands
 ```
 
@@ -57,10 +60,15 @@ nix develop /workspaces/nix-alpine/nix-alpine/toolbox#go -c \
   bash /smoke/tools/nix-alpine.sh env
 ```
 
-Smoke environment snapshots and composition directories should have a
-**single mutation owner**. When persistent shared state is needed, place the
-writer's state on `/exchange` and let readers consume immutable exported
-outputs rather than modify canonical environment files simultaneously.
+Smoke installs its Linux executable at `/exchange/smoke-state/bin/smoke`.
+The wrapper sets `SMOKE_ENV_DIR`, `SMOKE_COMPOSITION_MANIFEST`, and
+`SMOKE_COMPOSITION_DIR` into that shared state, while `SMOKE_LOCAL_SOURCE=/smoke`
+keeps recomposition linked to the edited local checkout instead of an
+unrelated published Go module version. In particular, Smoke `compose` runs
+its persistent installed executable, never the ephemeral executable produced
+by `go run`. Smoke environment snapshots and composition directories have a
+**single mutation owner**. Readers should consume immutable exported outputs
+rather than modify canonical environment files simultaneously.
 Native cross-VM file locking and cache coherence must be qualified before
 allowing concurrent Smoke environment writers.
 
