@@ -1,5 +1,11 @@
 # smoke
 
+> **Branch: `codex/ghxd-minimal-sops`.** The Nix-Alpine build on this branch
+> compiles `cmd/ghxd-minimal`, which excludes Logmash and defaults to an
+> empty composition. The general Logmash documentation below describes the
+> full Smoke composition on `main`, not the binary built by this branch.
+> See [minimal ghxd and local SOPS/age](docs/ghxd-minimal-sops.md).
+
 `smoke` is a self-composed Go executable. Optional commands and providers are linked into the `smoke` binary by importing their Go packages into a tiny local composition program and rebuilding that program with the system Go toolchain.
 
 The default composition includes Logmash directly. There is no separate `logmash` executable to resolve or install.
