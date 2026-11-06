@@ -54,7 +54,9 @@ jobs:
           smoke="$RUNNER_TEMP/smoke-ghxd-minimal"
           go build -o "$smoke" ./cmd/ghxd-minimal
           ! "$smoke" commands | grep -Fx logmash
-          if "$smoke" ghxd auth >"$RUNNER_TEMP/unauthorized" 2>&1; then
+          "$smoke" commands | grep -Fx secrets
+          "$smoke" commands | grep -Fx ghxd-secrets
+          if "$smoke" ghxd-secrets auth >"$RUNNER_TEMP/unauthorized" 2>&1; then
             echo 'Device auth without a client ID was permitted' >&2
             exit 1
           fi
