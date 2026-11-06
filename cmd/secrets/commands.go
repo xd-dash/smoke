@@ -22,9 +22,10 @@ func init() { command.Register("secrets", Run) }
 func Run(args []string) error {
  if len(args) < 2 { return errors.New("usage: smoke secrets <seal-json|verify-json|inspect|exec-env|exec-file> <file> [-- command args...]") }
  path := args[1]
- if err := secrets.ValidateSecretPath(path); err != nil { return err }
  switch args[0] {
+
  case "seal-json":
+  if err := secrets.ValidateSecretPath(path); err != nil { return err }
   if len(args) != 2 { return errors.New("usage: smoke secrets seal-json <output.enc.json>") }
   plaintext, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
   if err != nil { return errors.New("cannot read JSON input") }
