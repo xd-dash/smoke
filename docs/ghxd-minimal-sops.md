@@ -1,83 +1,92 @@
-# Minimal ghxd Smoke with local SOPS/age
+# Native SOPS/age in minimal ghxd Smoke
 
-This branch builds `cmd/ghxd-minimal` instead of the normal Logmash-composed
-`cmd/smoke`. It keeps the existing Smoke environment, composition and
-GitHub-tool contracts, but **does not link Logmash into the executable**.
-The first local composition manifest is `{"components":[]}`, and a manifest
-containing Logmash is rejected rather than silently migrated.
+This branch compiles `cmd/ghxd-minimal` with the optional
+`cmd/secrets` component. The existing Go composition registry, environment
+snapshots, and self-rebuild mechanism remain authoritative. Logmash is not
+included in this executable.
 
-## Relation to huram-abi
+## Cryptography and process boundary
 
-The historical `xd-dash/huram-abi` workflow invoked
-`dash-xd/bootstrap-secrets` to restore or generate `SOPS_AGE_KEY`, derive
-its public recipient, write `.sops.yaml`, and upload the age identity as a
-GitHub Actions secret. This local bootstrap deliberately does **not** upload
-private material to GitHub or expose it as a container environment variable.
+The reusable Go package `github.com/xd-dash/smoke/secrets` uses
+`filippo.io/age` for X25519 identity management and pinned
+`github.com/getsops/sops/v3` APIs for real SOPS JSON encryption and
+authenticated decryption. **No `sops` or `age-keygen` child processes
+are invoked by normal Smoke secret operations.** The optional
+`cmd/secrets` command only adapts the library to CLI calls.
 
-The macOS host holds the private key at
-`~/.config/nix.xd/age/keys.txt` (mode 0600), outside the workspace.
-`nix.xd` may reuse an existing conventional SOPS identity or generate a new
-identity if no existing identity and no encrypted local data are found.
-An older identity retained exclusively in GitHub Actions secrets cannot be
-retrieved from GitHub; new keys cannot decrypt its existing ciphertext.
+```
+smoke secrets seal-json output.enc.json          # plaintext JSON on stdin
+smoke secrets verify-json output.enc.json        # redacted success/failure
+smoke secrets inspect output.enc.json            # ciphertext metadata/digest
+smoke secrets exec-env output.enc.json -- program args...
+smoke secrets exec-file output.enc.json -- program --config '{}'
+```
 
-Only explicitly selected Podman Quadlets receive the key mounted read-only at
-`/run/secrets/age/keys.txt`; their `SOPS_AGE_KEY_FILE` environment variable
-contains the *path*, never the secret. SOPS ciphertext is local under
-`/workspaces/.private/sops` (gitignored). Two authorized Nix-Alpine scopes
-can independently decrypt the same ciphertext while keeping separate Nix
-stores. Reader source mounts are read-only. The private age key should not
-be committed, included in OCI images, copied to `/nix/store`, or uploaded
-as a CI artifact.
+`exec-env` requires a JSON object mapping environment names to strings.
+It performs one SOPS in-process decryption and Linux process replacement
+(`syscall.Exec`). No separate Smoke supervisor persists. Avoid using it to
+pass secrets to Nix evaluation, Nix builders, or untrusted executables.
 
-## Authentication
+`exec-file` uses a Linux sealed `memfd` rather than disk-backed plaintext.
+The `{}` placeholder becomes `/proc/self/fd/<fd>`. The descriptor remains
+open across process replacement and is available to the target. Applications
+that need an ordinary persistent file or fork/close inherited descriptors
+are not compatible with this mode. Non-Linux hosts fail closed.
 
-The minimal executable exposes:
+Future native Smoke commands can consume the same reusable `secrets`
+package without subprocesses or process-global `os.Setenv` mutation.
+A scoped native command invocation interface is not yet implemented.
+
+## Age source of truth
+
+**The canonical bootstrap Nix-Alpine Podman scope owns the age identity.**
+The rootless Podman Machine holds a dedicated named volume, conventionally
+`nix-xd-smoke-podman-age`. Its writer mount is:
+
+```
+/run/secrets/age/keys.txt       (0600, uid:gid 1000:1000)
+```
+
+The first bootstrap generates that identity using the pinned
+`nix-alpine/toolbox#security` flake (age and SOPS CLI available for
+bootstrap/diagnostics only). Later bootstraps reuse the same identity.
+An existing encrypted credential with a missing age identity makes
+bootstrap fail closed instead of generating an incompatible key.
+
+A second Nix-Alpine scope mounts **the same named age volume read-only**,
+with its own separate Nix store and a read-only source workspace.
+The private identity is not stored in macOS configuration, in `/workspaces`,
+in an OCI image, or in `/nix/store`. The shared ciphertext is at
+`/workspaces/.private/sops/ghxd.enc.json`, excluded by `nix.xd/.gitignore`.
+
+Both containers are deliberately authorized to decrypt the same ciphertext.
+Read-only filesystem access cannot prevent disclosure by a holder of the key;
+use a different identity/volume if a scope must not decrypt secrets.
+
+## GitHub user device authentication
 
 ```
 smoke ghxd auth
 smoke ghxd status
-smoke ghxd bootstrap
 ```
 
-`auth` uses GitHub's device authorization flow with
-`GITHUB_CLIENT_ID` (the public OAuth/GitHub App **client ID**, not the App ID).
-The user must authorize the displayed device code in a browser. On success,
-the access token and any refresh token are piped from Go process memory
-directly through `sops encrypt` and saved to
-`/workspaces/.private/sops/ghxd.enc.json` with mode 0600.
-The code refuses to overwrite an existing encrypted credential. An explicit
-refresh-and-rotation command remains future work; re-running `auth` does
-not silently invalidate a stored token.
+The first command requests a GitHub device code, accepts interactive user
+approval, and **requires both an access token and refresh token**. It
+encrypts the JSON credential in-process to the bootstrap-owned age
+recipient, saves ciphertext with mode 0600 using an exclusive atomic
+publish, and refuses to overwrite an existing credential. It never prints
+either token.
 
-`status` decrypts in process memory and prints only whether the access token
-is readable, whether a refresh token exists, and its scopes. It does not
-print the token bytes. This command can be run from both authorized scopes
-and its redacted output can be logged.
+The `status` command decrypts and verifies the SOPS document in-process
+and reports only a redacted status, refresh-token presence and granted
+scopes. Real token refresh/rotation and validation against the GitHub API
+are separate follow-on work. A GitHub App user token is not an
+installation token and may lack permission to update Actions secrets.
 
-The host's `make ghxd-auth GITHUB_CLIENT_ID=...` is intentionally
-**not logged**, because the GitHub device authorization user code is
-short-lived credential material. `make ghxd-token-check` is the logged,
-two-container check after authorization.
-
-GitHub App *user* device-flow tokens are permission-limited OAuth tokens;
-they are not installation access tokens, and they do not automatically
-provide the Actions secrets-write permissions used by older huram-abi
-automation. Grant only the necessary app permissions and do not assume this
-user credential can update GitHub Actions secrets.
-
-## Qualification
-
-`make qualify-ghxd` in `nix.xd` builds the minimal branch, establishes
-persistent Go caches, bootstraps two isolated Nix-Alpine scopes, exports and
-imports an exact Nix security-toolchain closure via the shared file cache,
-and verifies an encrypted **synthetic** probe can be decrypted by both
-containers. It then refreshes the writer and reruns the Go tests with
-`GOPROXY=off` to prove reuse of the persistent module cache. It never
-needs a real GitHub token for this qualification and never prints the age
-identity or decrypted probe contents.
-
-Only one scope mutates the shared workspace; the reader has an explicitly
-read-only bind mount. A shared age identity means **both authorized containers
-have decryption authority**. Container separation is not a security boundary
-between those two holders of the same private key.
+`xd-dash/nix.xd` provides the logged `make qualify-ghxd-auth` gate.
+It bootstraps both Podman scopes, performs a synthetic cross-container
+SOPS roundtrip, and then **pauses only for device approval**. The
+verification URL and short-lived code go directly to the controlling TTY
+instead of the diagnostic log. The actual token is encrypted before
+the final gate verifies it can be read by both scopes. The gate does not
+remove existing Apple Container resources or previous Nix store volumes.
