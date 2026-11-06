@@ -316,3 +316,32 @@ When modifying Smoke/Logmash:
 13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
 Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
+
+## Optional native secrets component
+
+`cmd/secrets` is an optional Go command package. It imports the reusable
+`secrets` SOPS/age library and registers with the existing command registry.
+The Smoke core, Logmash and environment snapshot machinery never import
+cryptography packages merely to make them available.
+
+The bootstrap Nix-Alpine scope owns the single age identity on a persistent
+Podman named volume, not in `/nix/store` or an immutable Go workspace.
+The identity path `SOPS_AGE_KEY_FILE` may be inherited, but secret key bytes
+must not be put in environment variables. The SOPS ciphertext is the only
+file exchanged through the shared workspace.
+
+Native SOPS operations decrypt in-process. A compiled native command may
+consume decrypted configuration in-process only through an explicit scoped
+API; never mutate `os.Setenv` for that use. External `exec-env` replaces
+the process image on Linux, preserving program exit/signal semantics.
+Linux `exec-file` uses a sealed memfd and a process replacement, retaining
+only the one required descriptor. Both operations are distinct from
+in-process Smoke command dispatch.
+
+SOPS encryption currently uses a **pinned unstable upstream encryption
+API**; every dependency update must qualify an authenticated JSON roundtrip
+and existing-ciphertext interoperability. SOPS decryption uses its supported
+stable helper. No decrypted secret values, GitHub device codes, private age
+identities or bearer/refresh token bytes may be included in logs, composition
+manifests, Nix derivations or GitHub Actions artifacts.
+
