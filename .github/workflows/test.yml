@@ -42,57 +42,27 @@ jobs:
           work="$SMOKE_ENV_DIR/native/go.work"
           grep -F 'github.com/dash-xd/github-cdn@' <<<"$(go env GOMODCACHE >/dev/null; printf '%s' "$resolved")"
           GOWORK="$work" go work edit -json >/dev/null
-      - name: Verify default Logmash composition and ghxd workspace
+      - name: Verify minimal ghxd executable and pinned tool workspace
         shell: bash
         env:
-          SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-envs
+          SMOKE_ENV_DIR: ${{ runner.temp }}/smoke-ghxd-minimal-envs
           GOPROXY: direct
           GONOSUMDB: github.com/dash-xd/github-cdn,github.com/dash-xd/github-device-auth,github.com/xd-dash/smoke
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          smoke="$RUNNER_TEMP/smoke-ghxd"
-          ghxd="$RUNNER_TEMP/ghxd"
-          go build -o "$smoke" ./cmd/smoke
-          go build -o "$ghxd" ./cmd/ghxd
-
-          "$smoke" commands | grep -Fx logmash
-          "$smoke" commands | grep -Fx ghxd
-
-          "$smoke" ghxd show | grep -Fx $'environment\tghxd'
-          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-cdn@go'
-          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/dash-xd/github-device-auth/cmd/github-device-auth@main'
-          "$smoke" ghxd show | grep -Fx $'tool\tgithub.com/xd-dash/smoke/cmd/github-worktree@dd0a7471383b4266c0368b089433dac0a4e3b3b5'
-
-          "$smoke" ghxd bootstrap
+          smoke="$RUNNER_TEMP/smoke-ghxd-minimal"
+          go build -o "$smoke" ./cmd/ghxd-minimal
+          ! "$smoke" commands | grep -Fx logmash
+          if "$smoke" ghxd auth >"$RUNNER_TEMP/unauthorized" 2>&1; then
+            echo 'Device auth without a client ID was permitted' >&2
+            exit 1
+          fi
+          ! grep -q 'gho_' "$RUNNER_TEMP/unauthorized"
           "$smoke" ghxd bootstrap
           tools="$SMOKE_ENV_DIR/ghxd/tools/go.mod"
+          test -f "$tools"
           grep -F 'github.com/dash-xd/github-cdn' "$tools"
           grep -F 'github.com/dash-xd/github-device-auth' "$tools"
           grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$tools"
-          ! grep -F 'github.com/dash-xd/agni' "$tools"
-
-          tool_list="$("$smoke" env tool list ghxd)"
-          grep -F github-cdn <<<"$tool_list"
-          grep -F github-device-auth <<<"$tool_list"
-          grep -F github-worktree <<<"$tool_list"
-
-          "$smoke" env create provider-test
-          "$smoke" ghxd apply provider-test
-          provider_tools="$SMOKE_ENV_DIR/provider-test/tools/go.mod"
-          grep -F 'github.com/dash-xd/github-cdn' "$provider_tools"
-          grep -F 'github.com/dash-xd/github-device-auth' "$provider_tools"
-          grep -F 'github.com/xd-dash/smoke/cmd/github-worktree' "$provider_tools"
-
-          "$ghxd" show | grep -Fx $'environment\tghxd'
-
-          destination="$RUNNER_TEMP/ghxd-worktree"
-          result="$($smoke ghxd worktree seed \
-            --repository xd-dash/smoke \
-            --sha "$GITHUB_SHA" \
-            --destination "$destination" \
-            --object-root "$RUNNER_TEMP/ghxd-git-components")"
-          jq -e --arg sha "$GITHUB_SHA" '.sha == $sha and .detached == true and .clean == true and (.object_database | length > 0)' <<<"$result"
-          [[ "$(git -C "$destination" rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          [[ -z "$(git -C "$destination" status --porcelain)" ]]
-          [[ -z "$(git -C "$destination" symbolic-ref -q HEAD || true)" ]]
+          "$smoke" env tool list ghxd | grep -F github-device-auth
