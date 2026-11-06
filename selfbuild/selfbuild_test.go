@@ -83,7 +83,7 @@ func TestEnsureGoModUsesMountedLocalSmokeSource(t *testing.T) {
 		t.Skip("Go toolchain unavailable")
 	}
 	local := t.TempDir()
-	if err := os.WriteFile(filepath.Join(local, "go.mod"), []byte("module github.com/xd-dash/smoke\\n\\ngo 1.26\\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(local, "go.mod"), []byte("module github.com/xd-dash/smoke\n\ngo 1.26\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SMOKE_LOCAL_SOURCE", local)
