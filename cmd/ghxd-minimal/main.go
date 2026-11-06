@@ -13,7 +13,14 @@ import (
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "ghxd" {
-		if len(os.Args) == 3 && os.Args[2] == "auth" {
+		if len(os.Args) == 3 && os.Args[2] == "status" {
+            if err := checkEncryptedCredential(context.Background()); err != nil {
+                fmt.Fprintln(os.Stderr, "ghxd status:", err)
+                os.Exit(1)
+            }
+            return
+        }
+        if len(os.Args) == 3 && os.Args[2] == "auth" {
             if err := bootstrapGitHubToken(context.Background()); err != nil {
                 fmt.Fprintln(os.Stderr, "ghxd auth:", err)
                 os.Exit(1)
@@ -21,7 +28,7 @@ func main() {
             return
         }
         if len(os.Args) != 3 || os.Args[2] != "bootstrap" {
-			fmt.Fprintln(os.Stderr, "usage: smoke ghxd <bootstrap|auth>")
+			fmt.Fprintln(os.Stderr, "usage: smoke ghxd <bootstrap|auth|status>")
 			os.Exit(2)
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
