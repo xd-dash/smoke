@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"context"
+		"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,10 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+			"strings"
 	"time"
+
+ "github.com/xd-dash/smoke/secrets"
 )
 
 type deviceCode struct {
@@ -131,61 +130,16 @@ func bootstrapGitHubToken(ctx context.Context) error {
 	}
 }
 
-func writeEncryptedToken(ctx context.Context, keyFile, output string, token accessToken) error {
-	data, err := json.Marshal(token)
-	if err != nil {
-		return err
-	}
-	publicKeyCmd := exec.CommandContext(ctx, "age-keygen", "-y", keyFile)
-	publicKeyCmd.Env = os.Environ()
-	recipientOutput, err := publicKeyCmd.Output()
-	if err != nil {
-		return fmt.Errorf("derive public age recipient: %w", err)
-	}
-	recipient := strings.TrimSpace(string(recipientOutput))
-	if !strings.HasPrefix(recipient, "age1") {
-		return errors.New("invalid age recipient")
-	}
-	cmd := exec.CommandContext(ctx, "sops", "encrypt", "--age", recipient,
-		"--input-type", "json", "--output-type", "json", "/dev/stdin")
-	cmd.Stdin = bytes.NewReader(data)
-	encrypted, err := cmd.Output()
-	if err != nil {
-		return errors.New("SOPS encryption failed; plaintext was not persisted")
-	}
-	if !bytes.Contains(encrypted, []byte(`"sops"`)) || bytes.Contains(encrypted, []byte(token.AccessToken)) {
-		return errors.New("SOPS output is not valid encrypted token material")
-	}
-	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(output), ".ghxd-encrypted-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if err := f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := f.Write(encrypted); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if _, err := os.Stat(output); err == nil {
-		return errors.New("encrypted credential was created concurrently; refusing to overwrite")
-	}
-	return os.Rename(f.Name(), output)
+func writeEncryptedToken(_ context.Context, keyFile, output string, token accessToken) error {
+ if err := secrets.ValidateSecretPath(output); err != nil { return err }
+ data, err := json.Marshal(token)
+ if err != nil { return err }
+ encrypted, err := secrets.EncryptJSON(data, keyFile)
+ if err != nil { return errors.New("native SOPS encryption failed") }
+ return secrets.SaveExclusive(output, encrypted)
 }
 
-func checkEncryptedCredential(ctx context.Context) error {
+func checkEncryptedCredential(_ context.Context) error {
 	output := strings.TrimSpace(os.Getenv("GHXD_SOPS_FILE"))
 	if output == "" {
 		output = "/workspaces/.private/sops/ghxd.enc.json"
@@ -193,11 +147,11 @@ func checkEncryptedCredential(ctx context.Context) error {
 	if strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE")) == "" {
 		return errors.New("SOPS_AGE_KEY_FILE is required")
 	}
-	cmd := exec.CommandContext(ctx, "sops", "decrypt", "--input-type", "json", "--output-type", "json", output)
-	data, err := cmd.Output()
-	if err != nil {
-		return errors.New("encrypted GitHub credential unavailable or cannot be decrypted")
-	}
+	keyFile := strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE"))
+ encrypted, err := os.ReadFile(output)
+ if err != nil { return errors.New("encrypted GitHub credential unavailable") }
+ data, err := secrets.DecryptJSON(encrypted, keyFile)
+ if err != nil { return errors.New("encrypted GitHub credential cannot be verified") }
 	var token accessToken
 	if err := json.Unmarshal(data, &token); err != nil {
 		return errors.New("decrypted GitHub credential is not valid JSON")
