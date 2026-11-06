@@ -7,6 +7,21 @@ cd "$root"
 action="${1:-test}"
 shift || true
 
+smoke_state() {
+  local state="${SMOKE_STATE_DIR:-}"
+  if [[ -z "$state" ]]; then
+    if [[ -d /workspaces && -w /workspaces ]]; then
+      state=/workspaces/.smoke-state
+    elif [[ -d /exchange && -w /exchange ]]; then
+      state=/exchange/smoke-state
+    else
+      echo "No writable shared workspace; set SMOKE_STATE_DIR" >&2
+      return 2
+    fi
+  fi
+  printf '%s\\n' "$state"
+}
+
 require_go() {
   command -v go >/dev/null || {
     echo "Go toolchain missing; enter the Nix-Alpine Go devShell first" >&2
@@ -46,11 +61,7 @@ case "$action" in
     ;;
   build)
     require_go
-    [[ -d /exchange && -w /exchange ]] || {
-      echo "Writable /exchange required to install the shared Smoke binary" >&2
-      exit 2
-    }
-    state="${SMOKE_STATE_DIR:-/exchange/smoke-state}"
+    state="$(smoke_state)"
     mkdir -p "$state/bin"
     staged="$(mktemp "$state/bin/.smoke-new-XXXXXXXX")"
     trap 'rm -f "$staged"' EXIT
@@ -62,7 +73,7 @@ case "$action" in
     ;;
   inspect|commands|compose|env)
     require_go
-    state="${SMOKE_STATE_DIR:-/exchange/smoke-state}"
+    state="$(smoke_state)"
     binary="$state/bin/smoke"
     [[ -x "$binary" ]] || {
       echo "No installed Smoke binary; run tools/nix-alpine.sh build first" >&2
