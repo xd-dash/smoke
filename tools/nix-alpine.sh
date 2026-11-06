@@ -65,7 +65,7 @@ case "$action" in
     mkdir -p "$state/bin"
     staged="$(mktemp "$state/bin/.smoke-new-XXXXXXXX")"
     trap 'rm -f "$staged"' EXIT
-    GOWORK=off CGO_ENABLED=0 go build -o "$staged" ./cmd/smoke
+    GOWORK=off CGO_ENABLED=0 go build -o "$staged" ./cmd/ghxd-minimal
     chmod 0755 "$staged"
     mv -f "$staged" "$state/bin/smoke"
     trap - EXIT
