@@ -140,25 +140,36 @@ func writeEncryptedToken(_ context.Context, keyFile, output string, token access
 }
 
 func checkEncryptedCredential(_ context.Context) error {
-	output := strings.TrimSpace(os.Getenv("GHXD_SOPS_FILE"))
-	if output == "" {
-		output = "/workspaces/.private/sops/ghxd.enc.json"
-	}
-	if strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE")) == "" {
-		return errors.New("SOPS_AGE_KEY_FILE is required")
-	}
-	keyFile := strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE"))
+ output := strings.TrimSpace(os.Getenv("GHXD_SOPS_FILE"))
+ if output == "" { output = "/workspaces/.private/sops/ghxd.enc.json" }
+ keyFile := strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE"))
+ if keyFile == "" { return errors.New("SOPS_AGE_KEY_FILE is required") }
  encrypted, err := os.ReadFile(output)
- if err != nil { return errors.New("encrypted GitHub credential unavailable") }
+ if err != nil { return errors.New("encrypted Huram checkpoint unavailable") }
  data, err := secrets.DecryptJSON(encrypted, keyFile)
- if err != nil { return errors.New("encrypted GitHub credential cannot be verified") }
-	var token accessToken
-	if err := json.Unmarshal(data, &token); err != nil {
-		return errors.New("decrypted GitHub credential is not valid JSON")
-	}
-	if token.AccessToken == "" {
-		return errors.New("decrypted GitHub credential has no access token")
-	}
-	fmt.Printf("GHXD_CREDENTIAL=READABLE refresh_token_present=%t scope=%s\n", token.RefreshToken != "", token.Scope)
-	return nil
+ if err != nil { return errors.New("encrypted Huram checkpoint cannot be decrypted or authenticated") }
+ defer clear(data)
+ var bundle struct {
+  Version int `json:"version"`
+  ClientID string `json:"client_id"`
+  AccessToken string `json:"access_token"`
+  RefreshToken string `json:"refresh_token"`
+  AccessTokenExpiresAt string `json:"access_token_expires_at"`
+  RefreshTokenExpiresAt string `json:"refresh_token_expires_at"`
+ }
+ if err := json.Unmarshal(data, &bundle); err != nil {
+  return errors.New("Huram checkpoint JSON is invalid")
+ }
+ if bundle.Version != 1 || bundle.ClientID == "" || bundle.AccessToken == "" ||
+    bundle.RefreshToken == "" || bundle.AccessTokenExpiresAt == "" || bundle.RefreshTokenExpiresAt == "" {
+  return errors.New("incomplete canonical Huram device credential checkpoint")
+ }
+ if _, err := time.Parse(time.RFC3339, bundle.AccessTokenExpiresAt); err != nil {
+  return errors.New("invalid access expiration timestamp")
+ }
+ if _, err := time.Parse(time.RFC3339, bundle.RefreshTokenExpiresAt); err != nil {
+  return errors.New("invalid refresh expiration timestamp")
+ }
+ fmt.Println("HURAM_CHECKPOINT=READABLE schema=1 pair=complete ciphertext_only=true token_validity=not_checked")
+ return nil
 }
