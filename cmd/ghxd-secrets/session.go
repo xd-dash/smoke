@@ -12,7 +12,6 @@ import (
  "os"
  "path/filepath"
  "syscall"
- "time"
 
  "github.com/xd-dash/smoke/secrets"
 )
