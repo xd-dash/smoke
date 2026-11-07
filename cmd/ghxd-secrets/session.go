@@ -111,7 +111,7 @@ func refreshStoredCredential(ctx context.Context) error {
  current,err:=os.ReadFile(path)
  if err!=nil{return errors.New("credential disappeared during refresh")}
  if !bytes.Equal(prior,current) {return errors.New("credential changed during refresh; replacement not published")}
- info,err:=os.Lstat(path)
+ info,err=os.Lstat(path)
  if err!=nil||!info.Mode().IsRegular()||info.Mode().Perm()!=0600 {
   return errors.New("encrypted credential must be a mode-0600 regular file")
  }
