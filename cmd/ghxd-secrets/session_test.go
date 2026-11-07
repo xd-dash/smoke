@@ -37,7 +37,7 @@ func TestSavedCredentialProbeAndRefresh(t *testing.T){
  t.Cleanup(func(){githubClient=originalClient})
  calls:=0
  server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-  if r.URL.Path=="/user"{
+  if r.URL.Path=="/user"||r.URL.Path=="/repos/xd-dash/skymill"{
    if r.Header.Get("Authorization")!="Bearer access-before"&&r.Header.Get("Authorization")!="Bearer access-after"{
     http.Error(w,"invalid",401);return
    }
