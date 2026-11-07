@@ -140,7 +140,25 @@ func writeEncryptedToken(_ context.Context, keyFile, output string, token access
 }
 
 func checkEncryptedCredential(_ context.Context) error {
- if _,err:=loadCheckpoint();err!=nil{return err}
- fmt.Println("HURAM_CHECKPOINT=READABLE schema=1 pair=complete ciphertext_only=true token_validity=not_checked")
- return nil
+	output := strings.TrimSpace(os.Getenv("GHXD_SOPS_FILE"))
+	if output == "" {
+		output = "/workspaces/.private/sops/ghxd.enc.json"
+	}
+	if strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE")) == "" {
+		return errors.New("SOPS_AGE_KEY_FILE is required")
+	}
+	keyFile := strings.TrimSpace(os.Getenv("SOPS_AGE_KEY_FILE"))
+ encrypted, err := os.ReadFile(output)
+ if err != nil { return errors.New("encrypted GitHub credential unavailable") }
+ data, err := secrets.DecryptJSON(encrypted, keyFile)
+ if err != nil { return errors.New("encrypted GitHub credential cannot be verified") }
+	var token accessToken
+	if err := json.Unmarshal(data, &token); err != nil {
+		return errors.New("decrypted GitHub credential is not valid JSON")
+	}
+	if token.AccessToken == "" {
+		return errors.New("decrypted GitHub credential has no access token")
+	}
+	fmt.Printf("GHXD_CREDENTIAL=READABLE refresh_token_present=%t scope=%s\n", token.RefreshToken != "", token.Scope)
+	return nil
 }
