@@ -34,16 +34,18 @@ func readCredential() (accessToken,[]byte,error) {
 }
 
 func verifyGitHubAccess(ctx context.Context,token string) error {
- req,err:=http.NewRequestWithContext(ctx,http.MethodGet,"https://api.github.com/user",nil)
- if err!=nil{return errors.New("cannot create GitHub verification request")}
- req.Header.Set("Authorization","Bearer "+token)
- req.Header.Set("Accept","application/vnd.github+json")
- resp,err:=githubClient.Do(req)
- if err!=nil{return errors.New("GitHub access verification request failed")}
- defer resp.Body.Close()
- _,_=io.Copy(io.Discard,io.LimitReader(resp.Body,8192))
- if resp.StatusCode!=http.StatusOK{
-  return fmt.Errorf("GitHub access verification failed: HTTP %d",resp.StatusCode)
+ for _,endpoint:=range []string{"user","repos/xd-dash/skymill"}{
+  req,err:=http.NewRequestWithContext(ctx,http.MethodGet,"https://api.github.com/"+endpoint,nil)
+  if err!=nil{return errors.New("cannot create GitHub verification request")}
+  req.Header.Set("Authorization","Bearer "+token)
+  req.Header.Set("Accept","application/vnd.github+json")
+  resp,err:=githubClient.Do(req)
+  if err!=nil{return errors.New("GitHub access verification request failed")}
+  _,_=io.Copy(io.Discard,io.LimitReader(resp.Body,8192))
+  _=resp.Body.Close()
+  if resp.StatusCode!=http.StatusOK{
+   return fmt.Errorf("GitHub access verification failed: resource=%s HTTP %d",endpoint,resp.StatusCode)
+  }
  }
  return nil
 }
@@ -70,6 +72,17 @@ func refreshStoredCredential(ctx context.Context) error {
  defer syscall.Flock(int(lock.Fd()),syscall.LOCK_UN)
  t,prior,err:=readCredential()
  if err!=nil{return err}
+ // Fail before the irrevocable remote rotation if the checkpoint cannot
+ // safely be replaced on this filesystem.
+ info,err:=os.Lstat(path)
+ if err!=nil||!info.Mode().IsRegular()||info.Mode().Perm()!=0600 {
+  return errors.New("encrypted credential must be a mode-0600 regular file")
+ }
+ stage,err:=os.CreateTemp(dir,".ghxd-preflight-*")
+ if err!=nil{return errors.New("credential filesystem is not writable")}
+ if err=stage.Sync();err!=nil{stage.Close();os.Remove(stage.Name());return errors.New("credential filesystem cannot sync")}
+ _=stage.Close()
+ _=os.Remove(stage.Name())
  clientID:=os.Getenv("GITHUB_CLIENT_ID")
  if clientID=="" {return errors.New("GITHUB_CLIENT_ID required for refresh")}
  refreshed:=accessToken{}
