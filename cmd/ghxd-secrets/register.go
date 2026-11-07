@@ -16,7 +16,7 @@ import (
 func init() { command.Register("ghxd-secrets", Run) }
 
 func Run(args []string) error {
- if len(args) != 1 { return errors.New("usage: smoke ghxd-secrets <auth|status>") }
+ if len(args) != 1 { return errors.New("usage: smoke ghxd-secrets <auth|status|probe|refresh>") }
  switch args[0] {
  case "auth":
   ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -24,6 +24,12 @@ func Run(args []string) error {
   return bootstrapGitHubToken(ctx)
  case "status":
   return checkEncryptedCredential(context.Background())
+ case "probe":
+  return probeStoredCredential(context.Background())
+ case "refresh":
+  ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+  defer stop()
+  return refreshStoredCredential(ctx)
  default:
   return fmt.Errorf("unknown ghxd-secrets operation")
  }
