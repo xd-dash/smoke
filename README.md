@@ -320,3 +320,11 @@ local smoke composition main.go
 Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
 
 `xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash owns subscription and callback supervision; Smoke only owns composition plus the small unattended-runtime start/list/stop boundary.
+
+## Wisp SSH composition
+
+The optional [Wisp command](docs/wisp.md) supplies Go-native SSH remote execution
+and local Unix-socket forwarding. Build `./cmd/smoke-wisp` for a Smoke composition
+containing Wisp and Logmash. Its first CoreOS gate checks user systemd success,
+failure and timeout behavior; complete Fatline and multi-VM qualification remain
+separate.
