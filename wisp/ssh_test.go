@@ -3,7 +3,9 @@ package wisp
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
@@ -32,6 +34,15 @@ func endpoint(t *testing.T) Config {
 		return nil, errors.New("key rejected")
 	}}
 	cfg.AddHostKey(signer)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSigner, err := ssh.NewSignerFromKey(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AddHostKey(otherSigner)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -240,5 +251,34 @@ func TestForwardOverSSH(t *testing.T) {
 				t.Fatal("did not stop")
 			}
 		})
+	}
+}
+
+func TestKnownHostAlgorithmPreference(t *testing.T) {
+	cfg := endpoint(t)
+	verify, err := knownhosts.New(cfg.KnownHostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := net.ResolveTCPAddr("tcp", cfg.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	algorithms, err := trustedHostAlgorithms(cfg.KnownHostsFile, cfg.Address, remote, verify)
+	if err != nil || len(algorithms) != 1 || algorithms[0] != ssh.KeyAlgoED25519 {
+		t.Fatalf("trusted algorithms: %v %v", algorithms, err)
+	}
+	if err := cfg.Exec(context.Background(), "ok", nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestChangedKnownHostRejected(t *testing.T) {
+	cfg := endpoint(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	other, _ := ssh.NewSignerFromKey(key)
+	os.WriteFile(cfg.KnownHostsFile, []byte(knownhosts.Line([]string{knownhosts.Normalize(cfg.Address)}, other.PublicKey())+"\n"), 0600)
+	if client, err := cfg.Dial(context.Background()); err == nil {
+		client.Close()
+		t.Fatal("accepted changed host key")
 	}
 }

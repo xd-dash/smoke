@@ -47,8 +47,13 @@ func (c Config) Dial(ctx context.Context) (*ssh.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	algorithms, err := trustedHostAlgorithms(c.KnownHostsFile, c.Address, conn.RemoteAddr(), verify)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 	stop := context.AfterFunc(handshakeCtx, func() { conn.Close() })
-	cc, chans, reqs, err := ssh.NewClientConn(conn, c.Address, &ssh.ClientConfig{User: c.User, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: verify})
+	cc, chans, reqs, err := ssh.NewClientConn(conn, c.Address, &ssh.ClientConfig{User: c.User, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: verify, HostKeyAlgorithms: algorithms})
 	if !stop() {
 		conn.Close()
 		return nil, handshakeCtx.Err()
@@ -166,4 +171,41 @@ func ListenUnix(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return listener, nil
+}
+
+// Prefer verified endpoint keys before negotiation; the callback still verifies
+// the actual key presented by the server. In particular RSA keys use SHA-2.
+func trustedHostAlgorithms(path, address string, remote net.Addr, verify ssh.HostKeyCallback) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	trusted := map[string]bool{}
+	for len(data) > 0 {
+		_, _, key, _, rest, err := ssh.ParseKnownHosts(data)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		data = rest
+		if verify(address, remote, key) != nil {
+			continue
+		}
+		if key.Type() == ssh.KeyAlgoRSA {
+			trusted[ssh.KeyAlgoRSASHA256] = true
+			trusted[ssh.KeyAlgoRSASHA512] = true
+		} else {
+			trusted[key.Type()] = true
+		}
+	}
+	var algorithms []string
+	for _, algorithm := range ssh.SupportedAlgorithms().HostKeys {
+		if trusted[algorithm] {
+			algorithms = append(algorithms, algorithm)
+		}
+	}
+	// CA-only trust retains the library's certificate negotiation and verification.
+	return algorithms, nil
 }
