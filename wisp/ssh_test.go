@@ -168,7 +168,7 @@ func TestUnixForwardTargetsAndCleanup(t *testing.T) {
 			defer cancel()
 			ready := make(chan struct{})
 			done := make(chan error, 1)
-			go func() { done <- cfg.Forward(ctx, listener, network, "test-target", func() { close(ready) }) }()
+			go func() { done <- cfg.Forward(ctx, listener, network, "127.0.0.1:1234", func() { close(ready) }) }()
 			select {
 			case <-ready:
 			case <-time.After(3 * time.Second):
