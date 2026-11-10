@@ -31,6 +31,7 @@ type Subscription struct {
 	Target   Target
 	Channels []string
 	Patterns []string
+	Ready    func()
 }
 
 type subscriptionKind int
@@ -85,13 +86,35 @@ func (p Provider) RunSubscription(ctx context.Context, sub Subscription, dispatc
 		}
 	}
 	defer pubsub.Close()
+	stop := context.AfterFunc(ctx, func() { pubsub.Close() })
+	defer stop()
 
-	if _, err := pubsub.Receive(ctx); err != nil {
-		return fmt.Errorf("redis subscribe: %w", err)
+	pending := []*redis.Message{}
+	for acknowledgements := 0; acknowledgements < len(sub.Channels)+len(sub.Patterns); {
+		response, err := pubsub.Receive(ctx)
+		if err != nil {
+			return fmt.Errorf("redis subscribe: %w", err)
+		}
+		switch value := response.(type) {
+		case *redis.Subscription:
+			acknowledgements++
+		case *redis.Message:
+			pending = append(pending, value)
+		}
 	}
 
+	if sub.Ready != nil {
+		sub.Ready()
+	}
 	for {
-		msg, err := pubsub.ReceiveMessage(ctx)
+		var msg *redis.Message
+		var err error
+		if len(pending) > 0 {
+			msg = pending[0]
+			pending = pending[1:]
+		} else {
+			msg, err = pubsub.ReceiveMessage(ctx)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()

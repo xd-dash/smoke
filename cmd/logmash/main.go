@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+ "path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 
 type sourceSelector struct { Country, Region, Value string; Pattern bool }
 type sourceSubscription struct { Source, Profile string; Channels, Patterns []string; Target redisprovider.Target; AuthProvider string }
-type cliArgs struct { Sources []sourceSelector; Into []intoSpec; Callbacks []string; Attached, Stdout bool; Policy callback.FailurePolicy; AuthProvider string }
+type cliArgs struct { Sources []sourceSelector; Into []intoSpec; Callbacks []string; Attached, Stdout bool; Policy callback.FailurePolicy; AuthProvider string; RedisSocket string }
 
 func init() { command.Register("logmash", Run) }
 
@@ -76,10 +77,14 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 	}
 	sources := make([]string, 0, len(groups)); for source := range groups { sources = append(sources, source) }; sort.Strings(sources)
 	authRegistry, err := redisauth.New(redisauth.None{}, redisauth.PasswordEnv{}, redisauth.ACLEnv{}, redisauth.AutoEnv{}); if err != nil { return nil, fmt.Errorf("auth registry: %w", err) }
-	out := make([]sourceSubscription, 0, len(sources))
+	if cfg.RedisSocket != "" && (!filepath.IsAbs(cfg.RedisSocket) || len(sources) != 1) { return nil, fmt.Errorf("--redis-socket requires an absolute path and exactly one logical source") }
+ out := make([]sourceSubscription, 0, len(sources))
 	for _, source := range sources {
 		group := groups[source]; profile := sourceProfile(group.country, group.region)
-		target, err := (redisprovider.DNSResolver{}).Resolve(ctx, profile); if err != nil { return nil, fmt.Errorf("resolve %s (%s): %w", source, profile, err) }
+		var target redisprovider.Target
+  if cfg.RedisSocket != "" { target = redisprovider.Target{Network:"unix", Socket:cfg.RedisSocket} } else {
+   var err error; target, err = (redisprovider.DNSResolver{}).Resolve(ctx, profile); if err != nil { return nil, fmt.Errorf("resolve %s (%s): %w", source, profile, err) }
+  }
 		authProvider := cfg.AuthProvider; if authProvider == "" { authProvider = target.AuthProvider }; if authProvider == "" { authProvider = "auto-env" }
 		authProfile := target.AuthProfile; if authProfile == "" { authProfile = strings.ReplaceAll(source, ":", "-") }
 		credentials, err := authRegistry.Resolve(ctx, authProvider, authProfile); if err != nil { return nil, fmt.Errorf("%s auth provider %s: %w", source, authProvider, err) }
@@ -91,7 +96,7 @@ func resolveSources(ctx context.Context, cfg cliArgs) ([]sourceSubscription, err
 
 func runSources(parent context.Context, subscriptions []sourceSubscription, dispatcher *callback.Dispatcher) error {
 	ctx, cancel := context.WithCancel(parent); defer cancel(); errCh := make(chan error, len(subscriptions)); var wg sync.WaitGroup
-	for _, source := range subscriptions { source := source; wg.Add(1); go func() { defer wg.Done(); err := redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{Target: source.Target, Channels: source.Channels, Patterns: source.Patterns}, dispatcher); if err != nil && ctx.Err() == nil { errCh <- fmt.Errorf("source %s: %w", source.Source, err); cancel() } }() }
+	for _, source := range subscriptions { source := source; wg.Add(1); go func() { defer wg.Done(); err := redisprovider.New().RunSubscription(ctx, redisprovider.Subscription{Target: source.Target, Channels: source.Channels, Patterns: source.Patterns, Ready: func(){ fmt.Fprintf(os.Stderr,"logmash: ready source=%s\n",source.Source) }}, dispatcher); if err != nil && ctx.Err() == nil { errCh <- fmt.Errorf("source %s: %w", source.Source, err); cancel() } }() }
 	done := make(chan struct{}); go func() { wg.Wait(); close(done) }()
 	select {
 	case err := <-errCh: <-done; return err
@@ -139,7 +144,8 @@ func parseArgs(args []string) (cliArgs, error) {
 		case "--into": if i+3 >= len(args) { return cfg, fmt.Errorf("--into requires PROVIDER PROFILE TARGET") }; cfg.Into = append(cfg.Into, intoSpec{Provider: args[i+1], Profile: args[i+2], Target: args[i+3]}); i += 3
 		case "--callback", "-c": i++; if i >= len(args) { return cfg, fmt.Errorf("%s requires a value", args[i-1]) }; cfg.Callbacks = append(cfg.Callbacks, args[i])
 		case "--callback-policy": i++; if i >= len(args) { return cfg, fmt.Errorf("--callback-policy requires a value") }; cfg.Policy = callback.FailurePolicy(args[i])
-		case "--auth-provider": i++; if i >= len(args) { return cfg, fmt.Errorf("--auth-provider requires a value") }; cfg.AuthProvider = args[i]
+		case "--redis-socket": i++; if i >= len(args) { return cfg, fmt.Errorf("--redis-socket requires an absolute socket path") }; cfg.RedisSocket = args[i]
+  case "--auth-provider": i++; if i >= len(args) { return cfg, fmt.Errorf("--auth-provider requires a value") }; cfg.AuthProvider = args[i]
 		case "--attached": cfg.Attached = true
 		case "--no-stdout", "-q": cfg.Stdout = false
 		default: if strings.HasPrefix(args[i], "-") { return cfg, fmt.Errorf("unknown option %q", args[i]) }; selector, err := parseSourceSelector(args[i], false); if err != nil { return cfg, err }; cfg.Sources = append(cfg.Sources, selector)

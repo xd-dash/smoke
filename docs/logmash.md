@@ -136,3 +136,24 @@ return redisprovider.New().RunSubscription(ctx, sub, dispatcher)
 ```
 
 Logmash owns subscription and callback supervision. Smoke owns composition and the small OS-process start/list/stop boundary used only for unattended runtimes.
+
+## Local Unix transport override
+
+`--redis-socket /absolute/path.sock` selects an explicit Unix endpoint for exactly
+one logical `COUNTRY:REGION` source, bypassing DNS discovery for that source. It
+preserves channel selectors and callback provenance. Use the existing `acl-env`
+auth provider for named-user credentials; credentials never belong in a socket
+path or selector. Multiple source groups require distinct endpoint mappings and
+are rejected by this single-endpoint option.
+
+```sh
+smoke logmash us:vm1:tenant:qualification \
+  --redis-socket /private/runtime/vm1.sock --auth-provider acl-env
+```
+
+Credentials are supplied as `LOGMASH_REDIS_US_VM1_USERNAME` and
+`LOGMASH_REDIS_US_VM1_PASSWORD`. Wisp can own that local socket and forward it
+through SSH to guest nginx, which proxies to Redis's Unix socket. Logmash itself
+has no SSH or nginx provisioning responsibility. Stderr reports
+`logmash: ready source=us:vm1` after subscription acknowledgements. Cancellation
+closes blocked Redis reads and waits for source goroutines before returning.
