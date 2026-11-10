@@ -148,6 +148,9 @@ func TestUnixForwardTargetsAndCleanup(t *testing.T) {
 			path := filepath.Join(dir, "socket")
 			listener, err := ListenUnix(path)
 			if errors.Is(err, syscall.EPERM) {
+				if os.Getenv("WISP_REQUIRE_UNIX") == "1" {
+					t.Fatal("AF_UNIX listener required for local qualification")
+				}
 				t.Skip("runner prohibits AF_UNIX listeners; run on local host")
 			}
 			if err != nil {
