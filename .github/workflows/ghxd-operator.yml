@@ -27,8 +27,10 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          flake=Path("local/ghxd/flake.nix").read_text()
-          assert 'smokeRevision = "917096ae54d8362b81a7ea4ebd6fe6ad8baa2719"' in flake
-          assert 'ghxd-source-build' in flake and 'ghxd-operator' in flake
-          assert 'exec ${pkgs.bash}/bin/bash ${./operator.sh}' in flake
+          flake=Path("flake.nix").read_text()
+          assert 'smokeSource = ./.;' in flake
+          assert 'fetchGit' not in flake
+          assert 'source-build' in flake and 'credential-runtime-adapter' in flake
+          assert 'exec ${pkgs.bash}/bin/bash ${./local/ghxd/operator.sh}' in flake
+          assert not Path("local/ghxd/flake.nix").exists()
           PY
