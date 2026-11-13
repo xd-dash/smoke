@@ -11,7 +11,7 @@ import (
 )
 
 const probotEnvironment = "probot"
-const probotToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime-api@36b60cb0415eb5a57b9cc60f4a54a4fe1252d0f1"
+const probotToolSpec = "github.com/xd-dash/probot-runtime/cmd/probot-runtime-api@9966c3cbaa433a1543cc713a9c71eca3e5dc1fc8"
 
 func init() { command.Register("probot", runProbot) }
 
