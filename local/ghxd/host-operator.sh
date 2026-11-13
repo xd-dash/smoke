@@ -29,9 +29,11 @@ checkout="${checkout%%/*}"
 [[ "$("${p[@]}" exec "$scope" cat "/workspaces/$checkout/.nix-xd-source-revision")" == "$NIX_XD_SELECTED_PROJECT_REV" ]] || { echo 'Staged Smoke source revision mismatch' >&2; exit 1; }
 [[ "$(podman machine inspect "$machine" --format '{{.State}}')" == running ]] || exit 1
 [[ "$("${p[@]}" inspect "$scope" --format '{{.State.Running}}')" == true ]] || exit 1
-store="$scope-store"
-[[ "$("${p[@]}" inspect "$scope" --format '{{range .Mounts}}{{if eq .Destination "/nix"}}{{.Name}}{{end}}{{end}}')" == "$store" ]] || {
-  echo 'Smoke source store does not match authoritative Nix-Alpine owner' >&2; exit 1;
+# The selected Nix-Alpine owner defines its own writable store domain.
+# Neither the guest OS nor the source controller chooses its store volume.
+store="$("${p[@]}" inspect "$scope" --format '{{range .Mounts}}{{if eq .Destination "/nix"}}{{.Name}}{{end}}{{end}}')"
+[[ "$store" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+  echo 'Selected Nix-Alpine owner has no named /nix store volume' >&2; exit 1;
 }
 "${p[@]}" image exists "$image" || exit 1
 
