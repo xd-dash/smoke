@@ -18,12 +18,12 @@
             '';
           };
           builder = pkgs.writeShellApplication {
-            name = "smoke-ghxd-source-build";
+            name = "smoke-source-build";
             runtimeInputs = with pkgs; [ go_1_26 git coreutils nix ];
             text = ''
               set -Eeuo pipefail
               source=${smokeSource}
-              root="''${HOME}/.local/state/smoke/builds"
+              root="''${HOME}/.local/state/smoke/builds/''${source##*/}"
               mkdir -p "$root/go-build" "$root/go-mod"
               export GOCACHE="$root/go-build" GOMODCACHE="$root/go-mod"
               export GOOS=linux CGO_ENABLED=0
@@ -43,7 +43,7 @@
       apps = eachSystem (system: {
         source-build = {
           type = "app";
-          program = "${self.packages.${system}.source-build}/bin/smoke-ghxd-source-build";
+          program = "${self.packages.${system}.source-build}/bin/smoke-source-build";
         };
       });
     };
