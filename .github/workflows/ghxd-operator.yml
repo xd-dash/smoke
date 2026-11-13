@@ -1,0 +1,34 @@
+name: Smoke GHXD operator qualification
+
+on:
+  push:
+    branches:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'local/ghxd/**'
+      - '.github/workflows/ghxd-operator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate delegated host actions and credential operator
+        run: |
+          bash -n local/ghxd/operator.sh local/ghxd/host-operator.sh
+          for action in local/ghxd/host-actions/*.sh; do bash -n "$action"; done
+      - name: Validate dated and immutable GitHub sources
+        run: python3 local/ghxd/test-source-version.py
+      - name: Check Smoke-native Nix flake declaration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          flake=Path("local/ghxd/flake.nix").read_text()
+          assert 'smokeRevision = "917096ae54d8362b81a7ea4ebd6fe6ad8baa2719"' in flake
+          assert 'ghxd-source-build' in flake and 'ghxd-operator' in flake
+          assert 'exec ${pkgs.bash}/bin/bash ${./operator.sh}' in flake
+          PY
