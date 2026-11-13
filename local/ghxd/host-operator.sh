@@ -132,12 +132,13 @@ for item in d["sources"].values():
           continue
         fi
         [[ "$existing" == absent ]] || { echo "Existing generation identity mismatch checkout=$checkout" >&2; exit 1; }
-        source_dir="/data/ghxd/generations/$checkout/$sha"
-        if "${p[@]}" run --rm --pull=never --network none --user 1000:1000 \
+        # Source fetching verified the selected SHA before this stage.
+        # Query the read-only source volume through a minimal POSIX shell:
+        # the OCI base image intentionally does not contain git.
+        source_dir="$("${p[@]}" run -i --rm --pull=never --network none --user 1000:1000 \
           --volume "$sources:/data/ghxd:ro,z" --entrypoint /bin/sh "$image" \
-          -ec "test -d '/data/ghxd/$checkout/.git' && test \"\$(git -C '/data/ghxd/$checkout' rev-parse HEAD)\" = '$sha'" 2>/dev/null; then
-          source_dir="/data/ghxd/$checkout"
-        fi
+          -s -- "$checkout" "$sha" < \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/select-source-path.sh")"
         "${p[@]}" exec "$scope" mkdir -p "/workspaces/.source-generations/$checkout"
         temporary="$("${p[@]}" exec "$scope" mktemp -d "/workspaces/.source-generations/$checkout/.incoming.XXXXXXXX")"
         if ! "${p[@]}" run --rm --pull=never --network none --user 1000:1000 \
