@@ -110,6 +110,7 @@ PY
     GH_TOKEN="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["access_token"])' "$scratch/token.json")"
     [[ -n "$GH_TOKEN" ]] || exit 1
     export GH_TOKEN
+    "$smoke" ghxd bootstrap >/dev/null
     rows="$(python3 -c '
 import json,re,sys
 d=json.load(sys.stdin)
@@ -124,13 +125,16 @@ for name,item in sorted(d["sources"].items()):
     [[ -n "$rows" ]] || { echo 'Empty source manifest' >&2; exit 2; }
     while IFS=$'\t' read -r repo sha checkout; do
       [[ -n "$repo" ]] || continue
-      dest="/data/ghxd/$checkout"
+      legacy="/data/ghxd/$checkout"
+      dest="/data/ghxd/generations/$checkout/$sha"
+      if [[ -e "$legacy" && "$(git -C "$legacy" rev-parse HEAD 2>/dev/null || true)" == "$sha" ]]; then
+        dest="$legacy"
+      fi
       if [[ -e "$dest" ]]; then
         [[ -d "$dest/.git" || -f "$dest/.git" ]] || exit 1
-        [[ "$(git -C "$dest" rev-parse HEAD)" == "$sha" ]] || {
-          echo "GHXD_SOURCE=conflict checkout=$checkout" >&2; exit 1;
-        }
+        [[ "$(git -C "$dest" rev-parse HEAD)" == "$sha" ]] || exit 1
         [[ -z "$(git -C "$dest" status --porcelain --untracked-files=no)" ]] || exit 1
+        echo "GHXD_SOURCE=reused checkout=$checkout sha=$sha"
       else
         "$smoke" ghxd worktree seed --repository "$repo" --sha "$sha" \
           --destination "$dest" --object-root /data/ghxd/objects
