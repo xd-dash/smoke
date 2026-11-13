@@ -19,7 +19,7 @@ import (
 
 const DefaultEnvironment = "ghxd"
 
-const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@dd0a7471383b4266c0368b089433dac0a4e3b3b5"
+const defaultWorktreeToolSpec = "github.com/xd-dash/smoke/cmd/github-worktree@a03ad841b9d8a2c5ef92759312ae4bdc72b17a7f"
 
 // ToolSpecs is the default GitHub capability set installed into the ghxd
 // workspace. GitHub-specific capability families may grow beneath ghxd when
