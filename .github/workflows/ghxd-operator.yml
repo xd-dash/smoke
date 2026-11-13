@@ -19,10 +19,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate delegated host actions and credential operator
         run: |
-          bash -n local/ghxd/operator.sh local/ghxd/host-operator.sh
+          bash -n local/ghxd/operator.sh local/ghxd/host-operator.sh local/ghxd/test-source-generation.sh
+          sh -n local/ghxd/activate-source-generation.sh
           for action in local/ghxd/host-actions/*.sh; do bash -n "$action"; done
       - name: Validate dated and immutable GitHub sources
-        run: python3 local/ghxd/test-source-version.py
+        run: |
+          python3 local/ghxd/test-source-version.py
+          bash local/ghxd/test-source-generation.sh
       - name: Check Smoke-native Nix flake declaration
         run: |
           python3 - <<'PY'
