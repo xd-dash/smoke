@@ -107,7 +107,7 @@ if [[ "$action" == source-sync ]]; then
     [[ -r "$manifest" ]] || { echo 'Unreadable source manifest' >&2; exit 2; }
     manifest_payload="$(cat "$manifest")"
   fi
-  printf '%s\n' "$manifest_payload" | python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/validate-source.py" -
+  printf '%s\n' "$manifest_payload" | python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-source.py" -
   printf '%s\n' "$manifest_payload" | "${p[@]}" run -i "${common[@]}" "$image" "$action"
   rows="$(python3 -c '
 import json,re,sys
