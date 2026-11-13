@@ -113,17 +113,24 @@ func Seed(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 
-	authArgs := gitAuthArgs(opts.Token)
-	fetchTarget := "origin"
-	if opts.Token != "" {
-		// Authenticated callers are responsible for selecting a direct Git binary
-		// when their runner wraps Git transport. Keep the canonical GitHub URL here
-		// so the URL-scoped Authorization extraheader matches the request.
-		fetchTarget = origin
-	}
-	fetchArgs := append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", fetchTarget, opts.SHA)
+	// Prefer anonymous Git fetch. A stale OAuth grant must not break a public
+	// repository; credentials are needed only if anonymous fetch fails.
+	fetchArgs := []string{"--git-dir=" + objectDatabase, "fetch", "--no-tags", "origin", opts.SHA}
 	if err := run(ctx, "", git, nil, fetchArgs...); err != nil {
-		return Result{}, err
+		if opts.Token == "" {
+			return Result{}, err
+		}
+		authArgs := gitAuthArgs(opts.Token)
+		fetchArgs = append(append([]string{}, authArgs...), "--git-dir="+objectDatabase, "fetch", "--no-tags", origin, opts.SHA)
+		if authErr := run(ctx, "", git, nil, fetchArgs...); authErr != nil {
+			return Result{}, fmt.Errorf("anonymous and authenticated Git fetch both failed for %s at %s: %w", opts.Repository, opts.SHA, authErr)
+		}
+	}
+	fetchTarget := "origin"
+	authArgs := []string{}
+	if opts.Token != "" {
+		fetchTarget = origin
+		authArgs = gitAuthArgs(opts.Token)
 	}
 	actualSHA, err := output(ctx, "", git, nil, "--git-dir="+objectDatabase, "rev-parse", opts.SHA+"^{commit}")
 	if err != nil {
