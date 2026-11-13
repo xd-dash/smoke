@@ -68,8 +68,16 @@ credential; the operator deliberately refuses that condition.
 Each daily workspace has its own `vYYYYMMDD` branch and dated
 checkout name. Immutable source SHA pins remain separate from the date.
 Persistent credential volumes and Nix GC roots are **not** renamed
-daily. A new Smoke version must not overwrite a staged checkout with
-different source contents; select a new date/generation instead.
+daily. Smoke now retains each fetched commit under a unique SHA generation, then
+stages it into the **selected Nix-Alpine writer** before activating its
+dated checkout alias. Re-running the same manifest reuses matching source
+generations. When the same dated checkout selects a different SHA, its
+previous source files are retained under
+`/workspaces/.source-generations/<checkout>/<previous-sha>`; the dated
+alias is switched to the new selected SHA. No Nix store, credential volume,
+or guest VM is replaced. In-flight readers of dated aliases are not
+transactionally coordinated by this adapter; avoid changing an alias during
+a concurrent qualification. Exact-SHA markers are checked by consumers.
 
 The root Smoke flake exposes `#source-build` and the optional
 `#credential-runtime-adapter` package. These build and wrap the same
@@ -87,3 +95,32 @@ selected host/runtime context.
 contracts, and the Smoke GHXD CI workflow checks the operator and
 host action syntax. This is static qualification, not proof of
 a successful live GHXD source-sync or token refresh on the Mac.
+
+## Public/private Git fetch and independent store domains
+
+The pinned Smoke Git worktree tool first attempts an anonymous exact-SHA
+fetch. If anonymous access fails and a runtime token is available, it
+retries with its process-scoped GitHub OAuth credential. This lets public
+Skymill/Logma sources work when a GHXD token has insufficient repository
+authorization, while private Probot Runtime can use the encrypted token.
+A private repository that still fails both attempts requires GitHub
+authorization; do not delete credential state or silently change the SHA.
+
+The host action selects the writer via `MACHINE` / `SCOPE` and reads
+its actual `/nix` Podman volume mount. It does not assume a CoreOS
+guest or require a particular shared store name. Grml/Grumble can run
+another independent Nix-Alpine writer with its own writable store and
+source generations alongside the CoreOS-oriented VM environment.
+
+Nix store paths are *not* relocated by Git source synchronization:
+a Nix process still needs a coherent `/nix/store` view. Parallel
+independent stores require separate chroot/container views (or a separate
+qualified multi-store execution primitive), not merely `--store` while
+the same filesystem namespace mounts a different store directory.
+
+The source-sync action completes Git fetching for every requested source
+before staging or switching any dated aliases. If a fetch fails, previously
+cached successful worktrees remain available for the retry and existing
+writer aliases are untouched. Stage all candidate source generations
+before alias switching; old generations remain available for qualified
+recovery or inspection. No VM boot, image build, or Redis operation occurs.
