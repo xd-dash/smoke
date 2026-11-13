@@ -320,3 +320,32 @@ local smoke composition main.go
 Optional packages depend on core contracts. The core does not need to import every optional provider. The composition root chooses what becomes part of the executable.
 
 `xd-dash/logma` remains a separate durable service/resource graph. Logmash is the ephemeral multi-source receive/route command compiled into Smoke. Logmash owns subscription and callback supervision; Smoke only owns composition plus the small unattended-runtime start/list/stop boundary.
+
+## Optional Probot Runtime operator tool
+
+`smoke probot` is a small, opt-in Go tool-environment adapter. Its
+`bootstrap` action creates or reuses the `probot` environment and
+adds the independently version-pinned `probot-runtime-api` Go tool
+from the private `xd-dash/probot-runtime` repository. It does not
+import the Probot Node service, install Quadlets, or bind credentials.
+
+```sh
+smoke probot bootstrap
+smoke probot tool --endpoint http://127.0.0.1:3000 ready
+smoke probot tool --endpoint https://probot.example.org \
+  --token-file /run/credentials/probot/operator delivery-run
+smoke probot tool --endpoint https://probot.example.org \
+  --token-file /run/credentials/probot/operator reconcile ROUTING_KEY
+```
+
+Private Go module resolution uses the selected Go/Git environment's
+existing repository authorization. GHXD's separate OAuth credential
+store is **not** implicitly injected into `go tool`. For an isolated
+Nix-Alpine writer, verify Go's private repository access before
+bootstrapping the optional tool; do not place OAuth tokens in command
+arguments, Nix derivations, or `go.work`.
+
+The `ready` command verifies Probot's Redis-backed service readiness.
+It does not prove a completed GitHub App Binding, Skymill settlement,
+or Probot worker execution. Operator routes must be kept private or
+behind separately qualified TLS authentication and access controls.
