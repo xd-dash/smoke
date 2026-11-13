@@ -11,7 +11,7 @@ flake="${NIX_XD_SELECTED_PROJECT_FLAKE:?Select exact Smoke project checkout}"
 build_app="#ghxd-source-build"
 package="#ghxd-operator"
 program="smoke-ghxd-operator"
-manifest="${SMOKE_SMOKE_GHXD_SOURCE_MANIFEST:-}"
+manifest="${SMOKE_GHXD_SOURCE_MANIFEST:-}"
 [[ "$machine" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || exit 2
 [[ "$scope" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || exit 2
 [[ "$system" == aarch64-linux || "$system" == x86_64-linux ]] || exit 2
@@ -21,7 +21,7 @@ manifest="${SMOKE_SMOKE_GHXD_SOURCE_MANIFEST:-}"
 [[ "$build_app" =~ ^#[A-Za-z0-9_-]+$ && "$package" =~ ^#[A-Za-z0-9_-]+$ ]] || exit 2
 [[ "$program" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
 [[ "$action" != source-sync || -n "$manifest" ]] || {
-  echo 'GHXD source-sync requires GHXD_SOURCE_MANIFEST' >&2; exit 2;
+  echo 'Smoke source-sync requires SMOKE_GHXD_SOURCE_MANIFEST' >&2; exit 2;
 }
 p=(podman --connection "$machine")
 checkout="${flake#/workspaces/}"
@@ -93,7 +93,7 @@ common=(--rm --pull=never --read-only --user 1000:1000 --cap-drop all --security
 
 if [[ "$action" == auth-start ]]; then
   [[ -n "${SMOKE_GHXD_CLIENT_ID:-}" ]] || {
-    echo 'GHXD_CLIENT_ID (public GitHub App/OAuth client ID) is required' >&2; exit 2;
+    echo 'SMOKE_GHXD_CLIENT_ID (public GitHub App/OAuth client ID) is required' >&2; exit 2;
   }
   common+=(--env SMOKE_GHXD_CLIENT_ID="${SMOKE_GHXD_CLIENT_ID}")
 fi
