@@ -119,30 +119,42 @@ for item in d["sources"].values():
     if not re.fullmatch(r"[0-9a-f]{40}",sha): raise SystemExit("Invalid SHA")
     print(checkout+chr(9)+sha)
 ' <<< "$manifest_payload")"
-  while IFS=$'\t' read -r checkout sha; do
-    [[ -n "$checkout" ]] || continue
-    destination="/workspaces/$checkout"
-    existing="$("${p[@]}" exec "$scope" sh -ec "if test -e '$destination'; then cat '$destination/.nix-xd-source-revision' 2>/dev/null || echo unknown; else echo absent; fi")"
-    if [[ "$existing" == "$sha" ]]; then
-      echo "GHXD_STAGE=reused checkout=$checkout sha=$sha"
-      continue
-    fi
-    [[ "$existing" == absent ]] || {
-      echo "Refusing to overwrite staged checkout $checkout (revision $existing)" >&2; exit 1;
-    }
-    temporary="$("${p[@]}" exec "$scope" mktemp -d "/workspaces/.$checkout.ghxd.XXXXXXXX")"
-    if ! "${p[@]}" run --rm --pull=never --network none --user 1000:1000 \
-      --volume "$sources:/data/ghxd:ro,z" --entrypoint /bin/tar "$image" \
-      -C "/data/ghxd/$checkout" --exclude=.git -cf - . |
-      "${p[@]}" exec -i "$scope" tar -C "$temporary" -xf -; then
-      "${p[@]}" exec "$scope" rm -rf -- "$temporary" || true
-      echo "GHXD_STAGE=failed checkout=$checkout" >&2
-      exit 1
-    fi
-    "${p[@]}" exec "$scope" sh -ec \
-      "printf '%s\\n' '$sha' > '$temporary/.nix-xd-source-revision' && mv '$temporary' '$destination'"
-    echo "GHXD_STAGE=passed checkout=$checkout sha=$sha"
-  done <<< "$rows"
+  for pass in stage activate; do
+    while IFS=$'\t' read -r checkout sha; do
+      [[ -n "$checkout" ]] || continue
+      generation="/workspaces/.source-generations/$checkout/$sha"
+      if [[ "$pass" == stage ]]; then
+        existing="$("${p[@]}" exec "$scope" sh -ec "if test -e '$generation'; then cat '$generation/.nix-xd-source-revision' 2>/dev/null || echo invalid; else echo absent; fi")"
+        if [[ "$existing" == "$sha" ]]; then
+          echo "GHXD_GENERATION=reused checkout=$checkout sha=$sha"
+          continue
+        fi
+        [[ "$existing" == absent ]] || { echo "Existing generation identity mismatch checkout=$checkout" >&2; exit 1; }
+        source_dir="/data/ghxd/generations/$checkout/$sha"
+        if "${p[@]}" run --rm --pull=never --network none --user 1000:1000 \
+          --volume "$sources:/data/ghxd:ro,z" --entrypoint /bin/sh "$image" \
+          -ec "test -d '/data/ghxd/$checkout/.git' && test \"\$(git -C '/data/ghxd/$checkout' rev-parse HEAD)\" = '$sha'" 2>/dev/null; then
+          source_dir="/data/ghxd/$checkout"
+        fi
+        "${p[@]}" exec "$scope" mkdir -p "/workspaces/.source-generations/$checkout"
+        temporary="$("${p[@]}" exec "$scope" mktemp -d "/workspaces/.source-generations/$checkout/.incoming.XXXXXXXX")"
+        if ! "${p[@]}" run --rm --pull=never --network none --user 1000:1000 \
+          --volume "$sources:/data/ghxd:ro,z" --entrypoint /bin/tar "$image" \
+          -C "$source_dir" --exclude=.git -cf - . |
+          "${p[@]}" exec -i "$scope" tar -C "$temporary" -xf -; then
+          "${p[@]}" exec "$scope" rm -rf -- "$temporary" || true
+          echo "GHXD_STAGE=failed checkout=$checkout" >&2
+          exit 1
+        fi
+        "${p[@]}" exec "$scope" sh -ec \
+          "printf '%s\\n' '$sha' > '$temporary/.nix-xd-source-revision' && mv '$temporary' '$generation'"
+        echo "GHXD_GENERATION=staged checkout=$checkout sha=$sha"
+      else
+        "${p[@]}" exec -i "$scope" sh -s -- "$checkout" "$sha" < \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/activate-source-generation.sh"
+      fi
+    done <<< "$rows"
+  done
   echo 'GHXD_WORKSPACE_SYNC=passed'
 else
   "${p[@]}" run "${common[@]}" "$image" "$action"
