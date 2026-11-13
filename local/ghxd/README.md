@@ -71,10 +71,15 @@ Persistent credential volumes and Nix GC roots are **not** renamed
 daily. A new Smoke version must not overwrite a staged checkout with
 different source contents; select a new date/generation instead.
 
-The `#ghxd-source-build` Nix app and `#ghxd-operator` package are
-defined in this Smoke flake. The application controls its own Go,
-SOPS, age, and GitHub dependencies. nix.xd only runs the selected
-application and provides the existing generic host/runtime context.
+The root Smoke flake exposes `#source-build` and the optional
+`#credential-runtime-adapter` package. These build and wrap the same
+selected Smoke source. There is no independently versioned GHXD binary
+or separate GHXD flake. GitHub commands are dispatched through the
+compiled `smoke ghxd` interface and its Go package implementations.
+The optional shell adapter handles runtime SOPS/age credential storage,
+Podman volume isolation, and source export; those deployment concerns are
+not an additional GHXD tool framework. nix.xd provides only the
+selected host/runtime context.
 
 ## Qualification
 
