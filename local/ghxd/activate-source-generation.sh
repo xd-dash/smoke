@@ -34,7 +34,11 @@ if [ -e "$alias" ] || [ -L "$alias" ]; then
     archive="$root/.source-generations/$checkout/$previous"
     [ ! -e "$archive" ] || { echo "Previous source generation already exists; refusing overwrite" >&2; exit 1; }
     mv "$alias" "$archive"
-    ln -s "$generation" "$alias"
+    if ! ln -s "$generation" "$alias"; then
+      mv "$archive" "$alias"
+      echo "Source alias update failed; previous checkout restored" >&2
+      exit 1
+    fi
   fi
   echo "GHXD_STAGE=reconciled checkout=$checkout previous=$previous sha=$revision retained=true"
 else
