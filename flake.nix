@@ -48,7 +48,7 @@
         architecture-check = {
           type = "app";
           program = "${nixpkgs.legacyPackages.${system}.writeShellScript "smoke-architecture-check" ''
-            exec ${nixpkgs.legacyPackages.${system}.bash}/bin/bash ${./local/ghxd/architecture-check.sh}
+            exec ${nixpkgs.legacyPackages.${system}.bash}/bin/bash ${./.}/local/ghxd/architecture-check.sh
           ''}";
         };
       });
