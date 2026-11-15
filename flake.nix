@@ -41,7 +41,7 @@
           source-build = builder;
           ghxd-native = pkgs.writeShellApplication {
             name = "smoke-ghxd-native";
-            runtimeInputs = with pkgs; [ bash coreutils gnugrep git gnutar python3 sops age nix ];
+            runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused git gnutar python3 sops age nix ];
             text = ''
               set -Eeuo pipefail
               output="$("${builder}/bin/smoke-source-build")"
