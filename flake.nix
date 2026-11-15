@@ -45,6 +45,12 @@
           type = "app";
           program = "${self.packages.${system}.source-build}/bin/smoke-source-build";
         };
+        architecture-check = {
+          type = "app";
+          program = "${nixpkgs.legacyPackages.${system}.writeShellScript "smoke-architecture-check" ''
+            exec ${nixpkgs.legacyPackages.${system}.bash}/bin/bash ${./local/ghxd/architecture-check.sh}
+          ''}";
+        };
       });
     };
 }
