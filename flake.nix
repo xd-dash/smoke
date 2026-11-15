@@ -39,11 +39,28 @@
         in {
           credential-runtime-adapter = operator;
           source-build = builder;
+          ghxd-native = pkgs.writeShellApplication {
+            name = "smoke-ghxd-native";
+            runtimeInputs = with pkgs; [ bash coreutils gnugrep git gnutar python3 sops age nix ];
+            text = ''
+              set -Eeuo pipefail
+              output="$("${builder}/bin/smoke-source-build")"
+              printf '%s\\n' "$output"
+              binary="$(printf '%s\\n' "$output" | sed -n 's/^SMOKE_GHXD_NATIVE_ARTIFACT=//p')"
+              [[ "$binary" =~ ^/nix/store/[a-z0-9]{32}-smoke$ && -x "$binary" ]] || exit 1
+              export SMOKE_GHXD_BINARY="$binary"
+              exec ${pkgs.bash}/bin/bash ${./local/ghxd/native-operator.sh} "$@"
+            '';
+          };
         });
       apps = eachSystem (system: {
         source-build = {
           type = "app";
           program = "${self.packages.${system}.source-build}/bin/smoke-source-build";
+        };
+        ghxd-native = {
+          type = "app";
+          program = "${self.packages.${system}.ghxd-native}/bin/smoke-ghxd-native";
         };
         architecture-check = {
           type = "app";
