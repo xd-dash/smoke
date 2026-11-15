@@ -45,11 +45,11 @@
             text = ''
               set -Eeuo pipefail
               output="$("${builder}/bin/smoke-source-build")"
-              printf '%s\\n' "$output"
-              binary="$(printf '%s\\n' "$output" | sed -n 's/^SMOKE_GHXD_NATIVE_ARTIFACT=//p')"
+              printf '%s\n' "$output"
+              binary="$(printf '%s\n' "$output" | sed -n 's/^SMOKE_GHXD_NATIVE_ARTIFACT=//p')"
               [[ "$binary" =~ ^/nix/store/[a-z0-9]{32}-smoke$ && -x "$binary" ]] || exit 1
               export SMOKE_GHXD_BINARY="$binary"
-              exec ${pkgs.bash}/bin/bash ${./local/ghxd/native-operator.sh} "$@"
+              exec ${pkgs.bash}/bin/bash ${./local/ghxd}/native-operator.sh "$@"
             '';
           };
         });
