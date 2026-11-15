@@ -69,3 +69,30 @@ process cleanup and leave unrelated running applications unchanged.
 `make architecture-check` is the static contract gate on this branch.
 A live Nix-Alpine-only GHXD gate is **not yet implemented**. Do not equate
 static checks with that gate.
+
+## Opt-in native Nix-Alpine candidate (implemented; live qualification pending)
+
+The flake now exports `#ghxd-native`. It wraps the existing built Smoke Go
+binary and `local/ghxd/operator.sh`, with grant-selected paths rather than
+launching a macOS-managed sibling Podman container. The declared mounts are
+`/run/nix-xd/mounts/ghxd-secret`, `ghxd-home` and `ghxd-workspaces`;
+all must be existing, UID 1000-owned and writable by the selected trusted
+Nix-Alpine owner. `source-sync <staged-json-manifest>` validates the
+source SHA and dated checkout, performs the original Smoke GHXD worktree
+operation, archives committed worktree contents, writes the revision marker
+and atomically selects a staged generation under `/workspaces`.
+`auth-refresh` is supported through the same source-controlled credential
+operator; no private tokens become derivation inputs.
+
+This is an **explicit security tradeoff**: mounting a writable GHXD secret
+volume into the general Nix-Alpine owner broadens access compared with the
+historical isolated GHXD sidecar. Only use the native variant if that owner's
+trust boundary is acceptable; otherwise retain a dedicated worker or design
+an attenuated capability transport. Do not run both adapters concurrently.
+
+The candidate may be selected with
+`nix run /workspaces/smoke20261115#ghxd-native -- source-sync /workspaces/<agni-checkout>/local/fatline/qualification/probot-factory-ghxd-sources.json`
+*after* preprovisioning and verifying named state-volume grants. Until a
+real pass confirms credentials, filesystem labels, clean worktree generation,
+version pin and rollback-free teardown, the host operator remains active
+and the overall architecture migration is **pending**.
