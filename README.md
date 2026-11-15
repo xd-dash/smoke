@@ -1,3 +1,5 @@
+> **v20261115 composition boundary:** See [GHXD/Nix-Alpine execution contract](docs/composition-contract-v20261115.md), [SMOKE_IDIOMS.md](SMOKE_IDIOMS.md), and [AGENTS.md](AGENTS.md). The macOS GHXD host-operator remains transitional until its native grant/source-sync gate passes.
+
 # smoke
 
 `smoke` is a self-composed Go executable. Optional commands and providers are linked into the `smoke` binary by importing their Go packages into a tiny local composition program and rebuilding that program with the system Go toolchain.
