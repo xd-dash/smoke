@@ -316,3 +316,18 @@ When modifying Smoke/Logmash:
 13. Update focused docs for user-visible behavior and this file for architectural invariant changes.
 
 Before adding a daemon, IPC channel, output persistence layer, runtime plugin mechanism, control-plane state, or custom environment dependency graph, first verify that the requirement cannot be expressed through existing Go composition, `go.work`/`go.mod`, immutable snapshots, runtime identity inspection, attached/unattended lifetime, typed providers, callback fan-out, or session start/list/stop primitives.
+
+## v20261115 Nix-Alpine and GHXD authority
+
+The canonical deployment goal is documented in
+[`docs/composition-contract-v20261115.md`](docs/composition-contract-v20261115.md).
+Smoke owns GHXD implementation and exact SHA materialization; Agni owns
+service selection/acceptance; nix.xd owns generic flake/store/guest transport.
+The macOS `local/ghxd/host-operator.sh` remains a **transitional exception**
+to the Nix-Alpine-only execution goal and is not a pattern for new adapters.
+No changes to GHXD credential, volume or source-seeding authority should be
+promoted without a native Nix-Alpine-only live grant and source-sync gate.
+The immutable Go composition and environment snapshot identities described
+above remain separate from the selected repository SHA.
+
+Run `nix run .#architecture-check` and Go tests for changes to this contract.
