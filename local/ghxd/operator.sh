@@ -6,8 +6,20 @@ mode="${1:?Expected bootstrap, auth-start, auth-finish, auth-refresh or source-s
 smoke="${SMOKE_GHXD_BINARY:?Select native Smoke binary from Nix store}"
 [[ "$smoke" =~ ^/nix/store/[a-z0-9]{32}-smoke$ && -x "$smoke" ]] || exit 2
 [[ "$(uname -s)" == Linux && "$(id -u)" == 1000 ]] || exit 2
-[[ "$HOME" == /home/ghxd && -d "$HOME" && -w "$HOME" ]] || exit 2
-credentials=/run/smoke/ghxd
+case "${SMOKE_GHXD_NATIVE:-0}" in
+  0)
+    [[ "$HOME" == /home/ghxd && -d "$HOME" && -w "$HOME" ]] || exit 2
+    credentials=/run/smoke/ghxd
+    source_root=/data/ghxd
+    ;;
+  1)
+    [[ "$HOME" == /run/nix-xd/mounts/ghxd-home && -d "$HOME" && -w "$HOME" ]] || exit 2
+    credentials=/run/nix-xd/mounts/ghxd-secret
+    source_root=/run/nix-xd/mounts/ghxd-workspaces
+    [[ -d "$source_root" && -w "$source_root" ]] || exit 2
+    ;;
+  *) echo 'Invalid native GHXD mode' >&2; exit 2 ;;
+esac
 [[ -d "$credentials" && -r "$credentials" ]] || exit 2
 if [[ "$mode" != source-sync ]]; then
   [[ -w "$credentials" ]] || exit 2
@@ -103,7 +115,7 @@ PY
     [[ -s "$ciphertext" && -s "$identity" ]] || {
       echo 'GHXD_AUTH=missing; authorize with auth-start/auth-finish first' >&2; exit 1;
     }
-    [[ -d /data/ghxd && -w /data/ghxd ]] || exit 1
+    [[ -d "$source_root" && -w "$source_root" ]] || exit 1
     scratch="$(mktemp -d /tmp/ghxd-source.XXXXXXXX)"
     trap 'rm -rf -- "$scratch"; unset GH_TOKEN' EXIT
     SOPS_AGE_KEY_FILE="$identity" sops --decrypt --input-type json --output-type json "$ciphertext" > "$scratch/token.json"
@@ -125,8 +137,8 @@ for name,item in sorted(d["sources"].items()):
     [[ -n "$rows" ]] || { echo 'Empty source manifest' >&2; exit 2; }
     while IFS=$'\t' read -r repo sha checkout; do
       [[ -n "$repo" ]] || continue
-      legacy="/data/ghxd/$checkout"
-      dest="/data/ghxd/generations/$checkout/$sha"
+      legacy="$source_root/$checkout"
+      dest="$source_root/generations/$checkout/$sha"
       if [[ -e "$legacy" && "$(git -C "$legacy" rev-parse HEAD 2>/dev/null || true)" == "$sha" ]]; then
         dest="$legacy"
       fi
@@ -137,7 +149,7 @@ for name,item in sorted(d["sources"].items()):
         echo "GHXD_SOURCE=reused checkout=$checkout sha=$sha"
       else
         "$smoke" ghxd worktree seed --repository "$repo" --sha "$sha" \
-          --destination "$dest" --object-root /data/ghxd/objects
+          --destination "$dest" --object-root "$source_root/objects"
       fi
       printf 'GHXD_SOURCE=passed repo=%s sha=%s checkout=%s\n' "$repo" "$sha" "$checkout"
     done <<< "$rows"
