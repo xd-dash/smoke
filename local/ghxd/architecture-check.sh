@@ -9,4 +9,9 @@ grep -Fq 'SMOKE_GHXD_SOURCE_MANIFEST' "$root/local/ghxd/host-operator.sh"
 grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/host-operator.sh"
 grep -Fq 'GIT_TERMINAL_PROMPT=0' "$root/local/ghxd/operator.sh"
 ! grep -Fq -- '--privileged' "$root/local/ghxd/host-operator.sh"
-echo 'SMOKE_ARCHITECTURE_CHECK=passed core=go ghxd=smoke-owner host_adapter=transitional'
+grep -Fq 'ghxd-native = pkgs.writeShellApplication' "$root/flake.nix"
+grep -Fq 'SMOKE_GHXD_NATIVE=passed action=source-sync execution=nix-alpine' "$root/local/ghxd/native-operator.sh"
+grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/native-operator.sh"
+grep -Fq 'SMOKE_GHXD_NATIVE:-0' "$root/local/ghxd/operator.sh"
+! grep -Fq 'podman ' "$root/local/ghxd/native-operator.sh"
+echo 'SMOKE_ARCHITECTURE_CHECK=passed core=go ghxd=smoke-owner host_adapter=transitional native_candidate=available'
