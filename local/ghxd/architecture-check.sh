@@ -14,4 +14,11 @@ grep -Fq 'SMOKE_GHXD_NATIVE=passed action=source-sync execution=nix-alpine' "$ro
 grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/native-operator.sh"
 grep -Fq 'SMOKE_GHXD_NATIVE:-0' "$root/local/ghxd/operator.sh"
 ! grep -Fq 'podman ' "$root/local/ghxd/native-operator.sh"
+canonical="$root/docs/CANONICAL-ARCHITECTURE.md"
+test -s "$canonical"
+grep -Fq 'Explicitly denied new patterns' "$canonical"
+grep -Fq 'one-writer' "$canonical"
+grep -Fq 'wrong SHA' "$canonical"
+grep -Fq 'docs/CANONICAL-ARCHITECTURE.md' "$root/AGENTS.md"
+grep -Fq 'PROHIBITED new paths' "$root/AGENTS.md"
 echo 'SMOKE_ARCHITECTURE_CHECK=passed core=go ghxd=smoke-owner host_adapter=transitional native_candidate=available'
