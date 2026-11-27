@@ -2,6 +2,8 @@
 
 **MANDATORY first reads:** [docs/CANONICAL-ARCHITECTURE.md](docs/CANONICAL-ARCHITECTURE.md), [SMOKE_IDIOMS.md](SMOKE_IDIOMS.md), [docs/composition-contract-v20261115.md](docs/composition-contract-v20261115.md). The canonical contract supersedes old host-operator examples for new work. Existing implementation is not permission to duplicate its legacy design.
 
+For cross-repository qualification, merges and cleanup, read Agni's `local/fatline/qualification/POST-QUALIFICATION-CLEANUP.md`. Legacy host-action inventory may only shrink and must be retired following observed native credential gates. Never delete other workloads, volumes, branches or evidence by wildcard.
+
 - Smoke owns composed **Go** workflow behavior: GHXD device auth, SOPS+age persistence, bounded refresh, exact-SHA source materialization, reusable qualifications and evidence. Optional command composition is via Go imports, not PATH plugin dispatch, duplicated Bash/Python algorithms, or new daemons.
 - nix.xd owns generic Nix-Alpine flake runner, store and grant transport. Agni owns topology, VM/Quadlet activation and application-specific success criteria. App repositories own domain effects. **DO NOT MOVE OWNERSHIP across boundaries.**
 - **PROHIBITED new paths:** Mac Podman GHXD operators, `project-host-run` callers, `local/*/host-actions/*`, ad hoc tar/source-sync authority, implicit mutable branch checkout, or a broad Podman socket. Existing `local/ghxd/host-operator.sh` and `host-actions` are quarantined migration exceptions only.

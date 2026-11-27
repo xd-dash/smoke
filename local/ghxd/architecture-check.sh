@@ -4,11 +4,24 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test -s "$root/docs/composition-contract-v20261115.md"
 grep -Fq 'transitional adapters' "$root/docs/composition-contract-v20261115.md"
 grep -Fq 'exec ${pkgs.bash}/bin/bash ${./local/ghxd/operator.sh}' "$root/flake.nix"
-grep -Fq 'exec bash' "$root/local/ghxd/host-actions/source-sync.sh"
-grep -Fq 'SMOKE_GHXD_SOURCE_MANIFEST' "$root/local/ghxd/host-operator.sh"
-grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/host-operator.sh"
+if [[ -d "$root/local/ghxd/host-actions" ]]; then
+  # The compatibility surface may shrink, but must not acquire new actions.
+  for action in "$root"/local/ghxd/host-actions/*.sh; do
+    [[ -e "$action" ]] || continue
+    case "${action##*/}" in
+      bootstrap.sh|auth-start.sh|auth-finish.sh|auth-refresh.sh|source-sync.sh|inventory.sh|provision.sh) ;;
+      *) echo 'SMOKE_ARCHITECTURE_CHECK=failed reason=expanded-host-action-inventory' >&2; exit 1 ;;
+    esac
+  done
+fi
+if [[ -f "$root/local/ghxd/host-operator.sh" ]]; then
+  grep -Fq 'SMOKE_GHXD_SOURCE_MANIFEST' "$root/local/ghxd/host-operator.sh"
+  grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/host-operator.sh"
+  ! grep -Fq -- '--privileged' "$root/local/ghxd/host-operator.sh"
+else
+  ! compgen -G "$root/local/ghxd/host-actions/*.sh" >/dev/null
+fi
 grep -Fq 'GIT_TERMINAL_PROMPT=0' "$root/local/ghxd/operator.sh"
-! grep -Fq -- '--privileged' "$root/local/ghxd/host-operator.sh"
 grep -Fq 'ghxd-native = pkgs.writeShellApplication' "$root/flake.nix"
 grep -Fq 'SMOKE_GHXD_NATIVE=passed action=source-sync execution=nix-alpine' "$root/local/ghxd/native-operator.sh"
 grep -Fq 'GHXD_WORKSPACE_SYNC=passed' "$root/local/ghxd/native-operator.sh"
